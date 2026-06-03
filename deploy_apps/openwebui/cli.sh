@@ -89,9 +89,10 @@ purge_stack() {
     
     # Clean up local data directory but preserve configs
     local data_dir="./data/${INSTANCE_NAME}_data"
-    if [ -d "$data_dir" ]; then
-        echo "Removing local data directory: $data_dir..."
-        rm -rf "$data_dir" 2>/dev/null || sudo rm -rf "$data_dir"
+    if [ -d "$data_dir" ] || [ -d "./data" ]; then
+        echo "Removing local data directory..."
+        rm -rf "$data_dir" 2>/dev/null || true
+        rm -rf "./data" 2>/dev/null || true
     fi
     
     echo "======================================================================"
@@ -104,6 +105,17 @@ status_stack() {
     [ -f "$COMPOSE_FILE" ] && docker compose -p "${INSTANCE_NAME}_proj" -f "$COMPOSE_FILE" ps
 }
 
+print_usage() {
+    echo "Usage: $0 {init|start|up|stop|rm|purge|status}"
+    echo "  init    : Generate configurations (settings.conf & compose.yml) without starting"
+    echo "  start   : Start the service containers"
+    echo "  up      : Initialize configs and start containers instantly"
+    echo "  stop    : Stop running containers"
+    echo "  rm      : Remove containers (Preserves ./data and configs)"
+    echo "  purge   : DANGER - Remove containers AND permanently delete ./data (Preserves configs)"
+    echo "  status  : Show container running status"
+}
+
 case "$COMMAND" in
     init)  init_config ;;
     start) start_stack ;;
@@ -112,5 +124,5 @@ case "$COMMAND" in
     rm)    rm_stack ;;
     purge) purge_stack ;;
     status) status_stack ;;
-    *) echo "Usage: $0 [init|start|up|stop|rm|purge|status]" ;;
+    *) print_usage ;;
 esac
