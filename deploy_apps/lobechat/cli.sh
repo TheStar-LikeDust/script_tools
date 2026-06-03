@@ -177,10 +177,45 @@ purge_stack() {
     echo "======================================================================"
 }
 
+stop_stack() {
+    source "$CONF_FILE"
+    echo "======================================================================"
+    echo "[INFO] Stopping LobeChat core application..."
+    echo "======================================================================"
+    [ -f "$COMPOSE_FILE" ] && docker compose -p "${INSTANCE_NAME}_proj" -f "$COMPOSE_FILE" stop
+}
+
+rm_stack() {
+    source "$CONF_FILE"
+    echo "======================================================================"
+    echo "[INFO] Removing LobeChat containers..."
+    echo "======================================================================"
+    [ -f "$COMPOSE_FILE" ] && docker compose -p "${INSTANCE_NAME}_proj" -f "$COMPOSE_FILE" down
+}
+
+status_stack() {
+    source "$CONF_FILE"
+    [ -f "$COMPOSE_FILE" ] && docker compose -p "${INSTANCE_NAME}_proj" -f "$COMPOSE_FILE" ps
+}
+
+print_usage() {
+    echo "Usage: $0 {init|start|up|stop|rm|purge|status}"
+    echo "  init    : Generate configurations (settings.conf & compose.yml) without starting"
+    echo "  start   : Start the service containers"
+    echo "  up      : Initialize configs and start containers instantly"
+    echo "  stop    : Stop running containers"
+    echo "  rm      : Remove containers (Preserves ./data and configs)"
+    echo "  purge   : DANGER - Remove containers AND permanently delete ./data (Preserves configs)"
+    echo "  status  : Show container running status"
+}
+
 case "$COMMAND" in
     init)  init_config ;;
     start) start_stack ;;
     up)    init_config && start_stack ;;
+    stop)  stop_stack ;;
+    rm)    rm_stack ;;
     purge) purge_stack ;;
-    *) echo "Usage: $0 [init|start|up|purge]" ;;
+    status) status_stack ;;
+    *) print_usage ;;
 esac

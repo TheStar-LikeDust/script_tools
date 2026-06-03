@@ -81,14 +81,27 @@ purge_data() {
     if [ -f "$CONF_FILE" ]; then
         source "$CONF_FILE"
         local data_dir="./data/${INSTANCE_NAME}_data"
-        if [ -d "$data_dir" ]; then
-            rm -rf "$data_dir" 2>/dev/null || sudo rm -rf "$data_dir"
+        if [ -d "$data_dir" ] || [ -d "./data" ]; then
+            echo "Removing local data directory..."
+            rm -rf "$data_dir" 2>/dev/null || true
+            rm -rf "./data" 2>/dev/null || true
             echo "======================================================================"
-            echo "[SUCCESS] [RustFS] Cleared data volume: $data_dir"
+            echo "[SUCCESS] [RustFS] Cleared data volumes"
             echo "======================================================================"
         fi
         echo "[INFO] Configuration file $CONF_FILE has been preserved."
     fi
+}
+
+print_usage() {
+    echo "Usage: $0 {init|start|up|stop|rm|purge|status}"
+    echo "  init    : Generate configurations (settings.conf & compose.yml) without starting"
+    echo "  start   : Start the service containers"
+    echo "  up      : Initialize configs and start containers instantly"
+    echo "  stop    : Stop running containers"
+    echo "  rm      : Remove containers (Preserves ./data and configs)"
+    echo "  purge   : DANGER - Remove containers AND permanently delete ./data (Preserves configs)"
+    echo "  status  : Show container running status"
 }
 
 case "$COMMAND" in
@@ -98,6 +111,6 @@ case "$COMMAND" in
     stop)   stop_service ;;
     rm)     remove_service ;;
     purge)  purge_data ;;
-    status) [ -f "$CONF_FILE" ] && source "$CONF_FILE" && docker ps -a --filter "name=${INSTANCE_NAME}" ;;
-    *) echo "Usage: $0 [init|start|up|stop|rm|purge|status]" ;;
+    status) [ -f "$CONF_FILE" ] && source "$CONF_FILE" && docker compose -p "${INSTANCE_NAME}_proj" -f "$COMPOSE_FILE" ps ;;
+    *) print_usage ;;
 esac

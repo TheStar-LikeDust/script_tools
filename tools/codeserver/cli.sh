@@ -50,9 +50,23 @@ cmd_init() {
     # Generate 4-digit timestamp suffix
     local ts=$(date +%s)
     local suffix=${ts: -4}
+    local password=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
     
-    # Replace XXXX with the timestamp suffix and create settings.conf
-    sed "s/codeserver_XXXX/codeserver_${suffix}/" "$TEMPLATE_FILE" > "$SETTINGS_FILE"
+    # Replace templates and create settings.conf
+    sed -e "s/codeserver_XXXX/codeserver_${suffix}/" \
+        -e "s/{{PASSWORD}}/${password}/" \
+        "$TEMPLATE_FILE" > "$SETTINGS_FILE"
+
+    # Load settings to generate config.yaml
+    source "$SETTINGS_FILE"
+    local abs_config_dir="${SCRIPT_DIR}/${CONFIG_DIR#./}"
+    mkdir -p "$abs_config_dir"
+    
+    echo "Generating config.yaml..."
+    sed -e "s/{{HOST}}/${HOST:-127.0.0.1}/" \
+        -e "s/{{PORT}}/${PORT:-8080}/" \
+        -e "s/{{PASSWORD}}/${PASSWORD}/" \
+        "${SCRIPT_DIR}/templates/config.yaml.tpl" > "$abs_config_dir/config.yaml"
 
     echo "Initialization complete."
     echo ""
@@ -84,9 +98,10 @@ cmd_run() {
     echo "Starting code-server..."
     echo "Config: $ABS_CONFIG_DIR/config.yaml"
     echo "User Data: $ABS_USER_DATA_DIR"
-    echo "Port: $PORT"
+    echo "Address: ${HOST:-127.0.0.1}:$PORT"
+    echo "Password: $PASSWORD"
     echo ""
-    code-server --bind-addr "0.0.0.0:$PORT" --config "$ABS_CONFIG_DIR/config.yaml" --user-data-dir "$ABS_USER_DATA_DIR"
+    code-server --config "$ABS_CONFIG_DIR/config.yaml" --user-data-dir "$ABS_USER_DATA_DIR"
 }
 
 cmd_start() {
@@ -112,11 +127,14 @@ cmd_start() {
     mkdir -p "$ABS_USER_DATA_DIR"
     
     echo "Starting code-server in tmux session: $SESSION_NAME"
-    echo "Port: $PORT"
-    tmux new-session -d -s "$SESSION_NAME" "code-server --bind-addr \"0.0.0.0:$PORT\" --config \"$ABS_CONFIG_DIR/config.yaml\" --user-data-dir \"$ABS_USER_DATA_DIR\""
+    tmux new-session -d -s "$SESSION_NAME" "code-server --config \"$ABS_CONFIG_DIR/config.yaml\" --user-data-dir \"$ABS_USER_DATA_DIR\""
     
-    echo "Background session started successfully."
-    echo "To view logs, use: tmux attach -t $SESSION_NAME"
+    echo "======================================================================"
+    echo "[SUCCESS] Background session started successfully."
+    echo "Access URL: http://${HOST:-127.0.0.1}:$PORT"
+    echo "Password  : $PASSWORD"
+    echo "To view logs: tmux attach -t $SESSION_NAME"
+    echo "======================================================================"
 }
 
 
@@ -159,6 +177,16 @@ cmd_status() {
 # Main CLI Router
 # ======================================================================
 
+print_usage() {
+    echo "Usage: $0 {init|install|run|start|stop|status}"
+    echo "  init    : Generate configuration file (settings.conf)"
+    echo "  install : Install code-server using official script"
+    echo "  run     : Start code-server directly in the foreground (blocking)"
+    echo "  start   : Start code-server in the background using tmux"
+    echo "  stop    : Stop the background tmux session"
+    echo "  status  : Check the status of the background tmux session"
+}
+
 case "$1" in
     init)
         cmd_init
@@ -179,13 +207,7 @@ case "$1" in
         cmd_status
         ;;
     *)
-        echo "Usage: $0 {init|install|run|start|stop|status}"
-        echo "  init    : Generate configuration file"
-        echo "  install : Install code-server using official script"
-        echo "  run     : Start code-server directly in the foreground (blocking)"
-        echo "  start   : Start code-server in the background using tmux"
-        echo "  stop    : Stop the background tmux session"
-        echo "  status  : Check the status of the background tmux session"
+        print_usage
         exit 1
         ;;
 esac
