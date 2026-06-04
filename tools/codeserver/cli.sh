@@ -173,17 +173,46 @@ cmd_status() {
     fi
 }
 
+cmd_purge() {
+    print_banner "Purging code-server data"
+    
+    echo "======================================================================"
+    echo "[WARN] WARNING: Preparing to completely destroy code-server data!"
+    echo "======================================================================"
+    
+    cmd_stop
+    
+    if [ -f "$SETTINGS_FILE" ]; then
+        source "$SETTINGS_FILE"
+        local abs_config_dir="${SCRIPT_DIR}/${CONFIG_DIR#./}"
+        local abs_user_data_dir="${SCRIPT_DIR}/${USER_DATA_DIR#./}"
+        
+        # Clean up local data directory but preserve settings.conf
+        echo "Removing local data directories..."
+        rm -rf "$abs_config_dir" 2>/dev/null || true
+        rm -rf "$abs_user_data_dir" 2>/dev/null || true
+        rm -rf "${SCRIPT_DIR}/data" 2>/dev/null || true
+        
+        echo "======================================================================"
+        echo "[SUCCESS] code-server data has been purged (settings.conf preserved)."
+        echo "======================================================================"
+    else
+        echo "settings.conf not found. No data to purge based on configuration."
+    fi
+}
+
 # ======================================================================
 # Main CLI Router
 # ======================================================================
 
 print_usage() {
-    echo "Usage: $0 {init|install|run|start|stop|status}"
+    echo "Usage: $0 {init|install|run|start|stop|purge|status}"
     echo "  init    : Generate configuration file (settings.conf)"
     echo "  install : Install code-server using official script"
     echo "  run     : Start code-server directly in the foreground (blocking)"
     echo "  start   : Start code-server in the background using tmux"
     echo "  stop    : Stop the background tmux session"
+    echo "  purge   : DANGER - Permanently delete ./data (Preserves settings.conf)"
     echo "  status  : Check the status of the background tmux session"
 }
 
@@ -202,6 +231,9 @@ case "$1" in
         ;;
     stop)
         cmd_stop
+        ;;
+    purge)
+        cmd_purge
         ;;
     status)
         cmd_status
