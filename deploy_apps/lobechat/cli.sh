@@ -40,7 +40,7 @@ init_config() {
     # --- 1. Database (ParadeDB) ---
     if [ "$USE_INTERNAL_DB" = "true" ]; then
         export APP_PREFIX="${INSTANCE_NAME}"
-        (cd "${SERVICES_DIR}/paradedb" && ./cli.sh init >/dev/null)
+        (cd "${SERVICES_DIR}/paradedb" && bash cli.sh init >/dev/null)
         source "${SERVICES_DIR}/paradedb/settings.conf"
         
         db_host="${INSTANCE_NAME}"
@@ -60,7 +60,7 @@ init_config() {
     # --- 2. Redis ---
     if [ "$USE_INTERNAL_REDIS" = "true" ]; then
         export APP_PREFIX="${INSTANCE_NAME}"
-        (cd "${SERVICES_DIR}/redis" && ./cli.sh init >/dev/null)
+        (cd "${SERVICES_DIR}/redis" && bash cli.sh init >/dev/null)
         source "${SERVICES_DIR}/redis/settings.conf"
         
         redis_url="redis://${INSTANCE_NAME}:6379"
@@ -72,7 +72,7 @@ init_config() {
     # --- 3. RustFS (S3) ---
     if [ "$USE_INTERNAL_S3" = "true" ]; then
         export APP_PREFIX="${INSTANCE_NAME}"
-        (cd "${SERVICES_DIR}/rustfs" && ./cli.sh init >/dev/null)
+        (cd "${SERVICES_DIR}/rustfs" && bash cli.sh init >/dev/null)
         source "${SERVICES_DIR}/rustfs/settings.conf"
         
         s3_endpoint="http://${INSTANCE_NAME}:9000"
@@ -94,7 +94,7 @@ init_config() {
         export CASDOOR_DB_USER="${db_user}"
         export CASDOOR_DB_PASSWORD="${db_pass}"
         export CASDOOR_DB_NAME="casdoor"
-        (cd "${SERVICES_DIR}/casdoor" && ./cli.sh init >/dev/null)
+        (cd "${SERVICES_DIR}/casdoor" && bash cli.sh init >/dev/null)
         source "${SERVICES_DIR}/casdoor/settings.conf"
         
         casdoor_issuer="http://<SERVER_IP>:${CASDOOR_PORT}"
@@ -146,10 +146,10 @@ start_stack() {
     echo "======================================================================"
     echo "[INFO] Starting all base services sequentially..."
     echo "======================================================================"
-    [ "$USE_INTERNAL_DB" = "true" ] && (cd "${SERVICES_DIR}/paradedb" && ./cli.sh start)
-    [ "$USE_INTERNAL_REDIS" = "true" ] && (cd "${SERVICES_DIR}/redis" && ./cli.sh start)
-    [ "$USE_INTERNAL_S3" = "true" ] && (cd "${SERVICES_DIR}/rustfs" && ./cli.sh start)
-    [ "$USE_INTERNAL_CASDOOR" = "true" ] && (cd "${SERVICES_DIR}/casdoor" && ./cli.sh start)
+    [ "$USE_INTERNAL_DB" = "true" ] && (cd "${SERVICES_DIR}/paradedb" && bash cli.sh start)
+    [ "$USE_INTERNAL_REDIS" = "true" ] && (cd "${SERVICES_DIR}/redis" && bash cli.sh start)
+    [ "$USE_INTERNAL_S3" = "true" ] && (cd "${SERVICES_DIR}/rustfs" && bash cli.sh start)
+    [ "$USE_INTERNAL_CASDOOR" = "true" ] && (cd "${SERVICES_DIR}/casdoor" && bash cli.sh start)
     
     echo "======================================================================"
     echo "[INFO] Starting LobeChat core application..."
@@ -167,10 +167,10 @@ purge_stack() {
     echo "======================================================================"
     [ -f "$COMPOSE_FILE" ] && docker compose -p "${INSTANCE_NAME}_proj" -f "$COMPOSE_FILE" down -v
     
-    [ "$USE_INTERNAL_CASDOOR" = "true" ] && (cd "${SERVICES_DIR}/casdoor" && ./cli.sh purge)
-    [ "$USE_INTERNAL_S3" = "true" ] && (cd "${SERVICES_DIR}/rustfs" && ./cli.sh purge)
-    [ "$USE_INTERNAL_REDIS" = "true" ] && (cd "${SERVICES_DIR}/redis" && ./cli.sh purge)
-    [ "$USE_INTERNAL_DB" = "true" ] && (cd "${SERVICES_DIR}/paradedb" && ./cli.sh purge)
+    [ "$USE_INTERNAL_CASDOOR" = "true" ] && (cd "${SERVICES_DIR}/casdoor" && bash cli.sh purge)
+    [ "$USE_INTERNAL_S3" = "true" ] && (cd "${SERVICES_DIR}/rustfs" && bash cli.sh purge)
+    [ "$USE_INTERNAL_REDIS" = "true" ] && (cd "${SERVICES_DIR}/redis" && bash cli.sh purge)
+    [ "$USE_INTERNAL_DB" = "true" ] && (cd "${SERVICES_DIR}/paradedb" && bash cli.sh purge)
     
     echo "======================================================================"
     echo "[SUCCESS] LobeChat Stack data has been purged (configs preserved)."
