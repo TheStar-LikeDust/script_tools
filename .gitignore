@@ -299,3 +299,22 @@ result.png
 
 # target pictures folder 
 target_pictures
+
+# ==============================================================================
+# script_tools generated artifacts (rendered by cli.sh init, must not be committed)
+# ==============================================================================
+# Per-instance settings (contain random secrets) and rendered compose files
+deploy/*/settings.conf
+deploy/*/compose.yml
+deploy_apps/*/settings.conf
+deploy_apps/*/compose.yml
+tools/*/settings.conf
+
+# Casdoor rendered app config
+deploy/casdoor/config/
+
+# Persistent data directories
+deploy/*/data/
+deploy_apps/*/data/
+tools/*/data/
+tools/*/user-data/

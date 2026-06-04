@@ -9,6 +9,11 @@ LOBECHAT_PORT="{{LOBECHAT_PORT}}"
 KEY_VAULTS_SECRET="{{KEY_VAULTS_SECRET}}"
 AUTH_SECRET="{{AUTH_SECRET}}"
 
+# Public host used to build the Casdoor SSO issuer URL (browser-facing).
+# Default 'localhost' assumes local-only access via port-forwarding (not exposed to the internet).
+# For external access, set this to your public IP or domain, e.g. auth.example.com
+CASDOOR_PUBLIC_HOST="localhost"
+
 # ==============================================================================
 # Internal Services (Set 'true' to auto-deploy these containers)
 # ==============================================================================

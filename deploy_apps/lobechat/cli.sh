@@ -97,7 +97,7 @@ init_config() {
         (cd "${SERVICES_DIR}/casdoor" && bash cli.sh init >/dev/null)
         source "${SERVICES_DIR}/casdoor/settings.conf"
         
-        casdoor_issuer="http://<SERVER_IP>:${CASDOOR_PORT}"
+        casdoor_issuer="http://${CASDOOR_PUBLIC_HOST}:${CASDOOR_PORT}"
         casdoor_id="<UPDATE_ME_AFTER_CASDOOR_START>"
         casdoor_secret="<UPDATE_ME_AFTER_CASDOOR_START>"
         source "$CONF_FILE"

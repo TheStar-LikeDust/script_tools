@@ -24,8 +24,9 @@
 
 我们提供了从 GitHub 获取最新版本一键解包的引导命令，这会免去 `git clone` 的繁琐记录。在终端运行：
 
+> **TODO（发布前必改）**：`install.sh` 与下方命令中的 `YourName/YourRepo` 都是占位符，发布前必须替换成真实的 GitHub 仓库地址（同时确认 `install.sh` 顶部的 `GITHUB_REPO` 与 `VERSION`）。
+
 ```bash
-# TODO: 发布前需要把这里的 raw 链接换成你真实的 GitHub 仓库地址
 bash <(curl -fsSL https://raw.githubusercontent.com/YourName/YourRepo/main/install.sh)
 cd script_tools
 ```
@@ -59,11 +60,11 @@ bash cli.sh up
 ```
 
 **发生了什么？**
-1. 在执行 `init` 时，脚本会自动生成 `settings.conf`，里面包含了随机分配的端口和默认的 `INSTANCE_NAME="paradedb"`。
+1. 在执行 `init` 时，脚本会自动生成 `settings.conf`，里面包含了随机分配的端口和默认的 `INSTANCE_NAME`。实例名采用 **时间戳后缀** 规则：独立部署时为 `<服务名>_<4位时间戳>`（例如 `paradedb_8421`）。
 2. 随后根据配置渲染出底层的 `compose.yml`。
-3. 执行 `start` 时，自动拉起隔离的 Docker 容器（容器名：`paradedb_paradedb`，数据保存在 `./data/paradedb_paradedb_data`）。
+3. 执行 `start` 时，自动拉起隔离的 Docker 容器（容器名等于 `INSTANCE_NAME`，如 `paradedb_8421`；compose 项目名为 `${INSTANCE_NAME}_proj`；数据保存在 `./data/<INSTANCE_NAME>_data`，如 `./data/paradedb_8421_data`）。
 
-如果后续需要防端口冲突或起第二个库，只需修改 `settings.conf` 里的参数，再执行 `bash cli.sh init && bash cli.sh start` 重载生效。
+如果后续需要防端口冲突或起第二个库，只需修改 `settings.conf` 里的 `INSTANCE_NAME`/端口等参数，再执行 `bash cli.sh init && bash cli.sh start` 重载生效。
 
 ### 场景二：一键部署全栈业务 (以 LobeChat 为例)
 
@@ -106,7 +107,7 @@ bash cli.sh up
 ```
 
 **发生了什么？**
-- **默认/内置模式**：部署控制器会去调用 `deploy/paradedb` 给你单独分配一个专属于 LobeChat 的隔离库（名叫 `lobechat_paradedb`），绝对不会和你之前的库混淆。
+- **默认/内置模式**：部署控制器会去调用 `deploy/paradedb` 给你单独分配一个专属于 LobeChat 的隔离库。级联部署时实例名规则为 `<服务名>_<上层APP前缀>_<4位时间戳>`（例如 `paradedb_lobechat_8421_9032`），绝对不会和你之前的库混淆。
 - **外部模式**：LobeChat 栈不会启动新的数据库容器，而是直接把外部数据库的账号密码传给 Casdoor 和 LobeChat 主程序进行连接。
 - **全局网络互通**：所有被拉起的底层组件都会自动连入同一个专属网络（如 `lobechat_network`）。
 

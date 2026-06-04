@@ -15,15 +15,18 @@ LobeChat 是一个现代化的、功能强大的开源大型语言模型（LLM�
 
 1. **依赖收集**：它首先去调用 `deploy/paradedb` 生成专属的数据库实例，拿到随机生成的数据库密码。
 2. **配置组装**：它把拿到的数据库密码、网络名称，自动组装并注入到 Casdoor 的配置文件中，确保服务间可以顺畅通信。
-3. **网络连通**：通过统一下发 `NETWORK_NAME` 环境变量，所有的底层服务都被织入了同一个自定义 Docker 网络。
-4. **统一启停**：管理所有底层容器的启动顺序（防止 Casdoor 启动时数据库还没准备好）。
+3. **网络连通**：通过统一下发 `NETWORK_NAME` 环境变量（子 shell 继承），所有的底层服务都被织入了同一个自定义 Docker 网络。
+4. **统一启停**：`start` 时按 DB → Redis → S3 → Casdoor → LobeChat 的顺序依次拉起容器。
+
+> **注意**：当前各容器以独立 compose 项目启动，启动命令为非阻塞的 `up -d`，**并不会等待数据库 healthcheck 就绪**。底层服务都配置了 `restart: unless-stopped`，应用层在依赖未就绪时会自行重启重试。如果你的环境对就绪顺序敏感，可在 `start` 后稍等片刻再访问。
 
 ## 核心配置项 (`settings.conf`)
 
 栈级别的 `settings.conf` 通常决定了全局的隔离前缀和网络名称：
 
-- `INSTANCE_NAME`: 全局业务实例名前缀（默认 `lobechat`）
+- `INSTANCE_NAME`: 全局业务实例名，时间戳后缀规则（默认如 `lobechat_8421`）
 - `NETWORK_NAME`: 全局通信网络名称（默认 `lobechat_network`）
+- `CASDOOR_PUBLIC_HOST`: 构建 Casdoor SSO issuer 的浏览器可达地址，**默认 `localhost`**（假设仅本机端口转发访问，不对公网暴露）。若需要从外部访问，请改成你的公网 IP 或域名（例如 `auth.example.com`）。
 
 ## 常见操作
 

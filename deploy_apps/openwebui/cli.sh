@@ -89,10 +89,9 @@ purge_stack() {
     
     # Clean up local data directory but preserve configs
     local data_dir="./data/${INSTANCE_NAME}_data"
-    if [ -d "$data_dir" ] || [ -d "./data" ]; then
+    if [ -d "$data_dir" ]; then
         echo "Removing local data directory..."
         rm -rf "$data_dir" 2>/dev/null || true
-        rm -rf "./data" 2>/dev/null || true
     fi
     
     echo "======================================================================"

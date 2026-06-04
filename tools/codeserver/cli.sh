@@ -191,7 +191,6 @@ cmd_purge() {
         echo "Removing local data directories..."
         rm -rf "$abs_config_dir" 2>/dev/null || true
         rm -rf "$abs_user_data_dir" 2>/dev/null || true
-        rm -rf "${SCRIPT_DIR}/data" 2>/dev/null || true
         
         echo "======================================================================"
         echo "[SUCCESS] code-server data has been purged (settings.conf preserved)."

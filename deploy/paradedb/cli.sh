@@ -73,10 +73,9 @@ purge_data() {
     if [ -f "$CONF_FILE" ]; then
         source "$CONF_FILE"
         local data_dir="./data/${INSTANCE_NAME}_data"
-        if [ -d "$data_dir" ] || [ -d "./data" ]; then
+        if [ -d "$data_dir" ]; then
             echo "Removing local data directory..."
             rm -rf "$data_dir" 2>/dev/null || true
-            rm -rf "./data" 2>/dev/null || true
             echo "======================================================================"
             echo "[SUCCESS] [ParadeDB] Cleared data volumes"
             echo "======================================================================"

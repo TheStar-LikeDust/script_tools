@@ -21,7 +21,7 @@ init_config() {
         
         sed -e "s/{{INSTANCE_NAME}}/${default_name}/g" \
             -e "s/{{CASDOOR_PORT}}/${port}/g" \
-            -e "s/{{CASDOOR_DB_HOST}}/${CASDOOR_DB_HOST:-paradedb_paradedb}/g" \
+            -e "s/{{CASDOOR_DB_HOST}}/${CASDOOR_DB_HOST:-<UPDATE_ME_DB_HOST>}/g" \
             -e "s/{{CASDOOR_DB_USER}}/${CASDOOR_DB_USER:-postgres}/g" \
             -e "s/{{CASDOOR_DB_PASSWORD}}/${CASDOOR_DB_PASSWORD:-your_db_password_here}/g" \
             -e "s/{{CASDOOR_DB_NAME}}/${CASDOOR_DB_NAME:-casdoor}/g" \
@@ -78,10 +78,9 @@ purge_data() {
     if [ -f "$CONF_FILE" ]; then
         source "$CONF_FILE"
         local data_dir="./data/${INSTANCE_NAME}_data"
-        if [ -d "$data_dir" ] || [ -d "./data" ]; then
+        if [ -d "$data_dir" ]; then
             echo "Removing local data directory..."
             rm -rf "$data_dir" 2>/dev/null || true
-            rm -rf "./data" 2>/dev/null || true
             echo "======================================================================"
             echo "[SUCCESS] [Casdoor] Cleared data volumes"
             echo "======================================================================"

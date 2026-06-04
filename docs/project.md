@@ -59,3 +59,35 @@ Usage: bash cli.sh {init|start|up|stop|rm|purge|status}
    ```
 3. **关键信息暴露**: 当服务成功 `start` 后，必须在边界符内部，清晰打印出当前实例暴露的 IP/端口，以及随机生成的密码或默认的初始账号。
 4. **人工介入指引分离**: 诸如“第一次启动 Casdoor 需要人工进入后台创建应用”这类“鸡生蛋”的强介入环节，绝不能拆分成 `start_bases` 等多段碎片脚本，而应维持原子的 `init` -> `start`。并在 `init` 步骤结束后的回显中，显眼地提供“Manual Action Required”的操作说明手册。
+
+## 4. 实例命名规范 (INSTANCE_NAME)
+
+实例名由 `cli.sh init` 在首次生成 `settings.conf` 时自动分配，采用 **时间戳后缀** 规则，保证同机多开互不冲突：
+
+- **独立部署**：`<服务名>_<4位时间戳>`，例如 `paradedb_8421`。
+- **被 app 级联部署**：上层 app 通过 `export APP_PREFIX="${INSTANCE_NAME}"` 注入前缀，底层服务命名为 `<服务名>_<APP_PREFIX>_<4位时间戳>`，例如 `paradedb_lobechat_8421_9032`。
+
+派生命名约定（所有组件必须一致）：
+
+- 容器名：直接等于 `INSTANCE_NAME`。
+- compose 项目名：`${INSTANCE_NAME}_proj`。
+- 持久化目录：`./data/${INSTANCE_NAME}_data`。
+
+## 5. 网络传播约束 (NETWORK_NAME)
+
+复合应用依靠 **环境变量继承** 把底层服务织入同一张 Docker 网络，机制如下：
+
+1. 复合应用在 `init` 中 `source settings.conf` 后 `export NETWORK_NAME`（默认 `<app>_network`）。
+2. 随后以子 shell 方式 `(cd ../../deploy/xxx && bash cli.sh init)` 调用底层服务，子 shell 继承到该 `NETWORK_NAME`。
+3. 底层服务渲染时使用 `${NETWORK_NAME:-${INSTANCE_NAME}_network}` 兜底，从而落到上层指定的同一网络。
+
+**强约束**：基础服务（`deploy/*`）的 `settings.conf` **禁止固化 `NETWORK_NAME`**，必须保持上述 `:-` 兜底写法。一旦在基础服务配置中写死 `NETWORK_NAME`，子 shell 继承将被覆盖，级联组网立即失效，底层容器无法被应用按容器名解析。
+
+## 6. 生成物与源文件 (Generated vs. Source)
+
+每个服务目录中需要区分「纳入版本管理的源文件」与「`init` 渲染产生、不应提交」的生成物：
+
+- **源文件（提交）**：`cli.sh`、`templates/*.tpl`、该服务的说明文档。
+- **生成物（不提交，由 `.gitignore` 忽略）**：`settings.conf`、`compose.yml`、Casdoor 的 `config/app.conf`、各服务的 `data/` 持久化目录。
+
+注意：`settings.conf` 含随机生成的密钥/密码，属于本地资产，既不提交也不会被 `purge` 删除（见 §2.1）；迁移服务时应连同 `settings.conf` 与 `data/` 一起打包。

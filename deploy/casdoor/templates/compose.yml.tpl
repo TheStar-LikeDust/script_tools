@@ -8,7 +8,7 @@ services:
     environment:
       RUNNING_IN_DOCKER: "true"
     volumes:
-      - ./casdoor.conf:/conf/app.conf
+      - ./config/app.conf:/conf/app.conf
       - ./data/{{INSTANCE_NAME}}_data:/data
     networks:
       - default

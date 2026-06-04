@@ -4,7 +4,7 @@ services:
     container_name: {{INSTANCE_NAME}}
     restart: unless-stopped
     ports:
-      - "{{LOBECHAT_PORT}:3210"
+      - "{{LOBECHAT_PORT}}:3210"
     environment:
       - "DATABASE_URL=postgresql://{{DB_USER}}:{{DB_PASSWORD}}@{{DB_HOST}}:{{DB_PORT}}/{{DB_NAME}}"
       - "INTERNAL_APP_URL=http://localhost:3210"
