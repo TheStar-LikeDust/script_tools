@@ -3,16 +3,26 @@ set -euo pipefail
 
 COMMAND=${1:-help}
 CONF_FILE="settings.conf"
-COMPOSE_FILE="compose.yml"
+IMAGE="ghcr.io/open-webui/open-webui:main"
 
+hr() { echo "======================================================================"; }
 random_port() { shuf -i 30000-40000 -n 1; }
 random_secret() { openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 40; }
 
-init_config() {
-    echo "======================================================================"
+require_conf() {
+    if [ ! -f "$CONF_FILE" ]; then
+        echo "[ERROR] [Open WebUI] $CONF_FILE not found. Run 'bash cli.sh init' first."
+        exit 1
+    fi
+}
+
+container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
+
+do_init() {
+    hr
     echo "[INFO] [Open WebUI] Initializing configuration..."
-    echo "======================================================================"
-    
+    hr
+
     if [ ! -f "$CONF_FILE" ]; then
         local port=$(random_port)
         local secret=$(random_secret)
@@ -20,108 +30,128 @@ init_config() {
         local suffix=${ts: -4}
         local default_name="openwebui_${suffix}"
         [ -n "${APP_PREFIX:-}" ] && default_name="openwebui_${APP_PREFIX}_${suffix}"
-        
+
         sed -e "s/{{INSTANCE_NAME}}/${default_name}/g" \
             -e "s/{{OPENWEBUI_PORT}}/${port}/g" \
             -e "s/{{WEBUI_SECRET_KEY}}/${secret}/g" \
             templates/settings.conf.tpl > "$CONF_FILE"
     fi
-    
+
     source "$CONF_FILE"
-    
-    sed -e "s/{{INSTANCE_NAME}}/${INSTANCE_NAME}/g" \
-        -e "s/{{OPENWEBUI_PORT}}/${OPENWEBUI_PORT}/g" \
-        -e "s/{{WEBUI_SECRET_KEY}}/${WEBUI_SECRET_KEY}/g" \
-        -e "s|{{OLLAMA_BASE_URL}}|${OLLAMA_BASE_URL:-}|g" \
-        -e "s|{{OPENAI_API_BASE_URL}}|${OPENAI_API_BASE_URL:-}|g" \
-        -e "s/{{OPENAI_API_KEY}}/${OPENAI_API_KEY:-}/g" \
-        -e "s/{{HF_TOKEN}}/${HF_TOKEN:-}/g" \
-        -e "s/{{CORS_ALLOW_ORIGIN}}/${CORS_ALLOW_ORIGIN:-*}/g" \
-        templates/compose.yml.tpl > "$COMPOSE_FILE"
-        
-    echo "======================================================================"
+
+    # Pre-create the bind-mount data dir so Docker won't auto-create it as root
+    mkdir -p "./data/${INSTANCE_NAME}_data"
+
+    hr
     echo "[SUCCESS] Open WebUI initialization completed!"
-    echo "======================================================================"
+    hr
     echo "[IMPORTANT] Recommended next steps:"
-    echo "  1. Review settings.conf (you can set OPENAI_API_KEY and other env vars here)"
+    echo "  1. Review settings.conf (set OPENAI_API_KEY / OLLAMA_BASE_URL etc. here)"
     echo "  2. Run 'bash cli.sh start' to bring up the service"
-    echo "======================================================================"
+    echo "Note: managed via plain 'docker run'; settings.conf is the single config source."
+    hr
 }
 
-start_stack() {
-    source "$CONF_FILE"
-    export USER_AGENT="${USER_AGENT:-Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36}"
-    
-    echo "======================================================================"
+do_start() {
+    require_conf
+    # Export all settings so 'docker run -e VAR' passes them through cleanly
+    # (bash strips quotes / keeps spaces correctly, e.g. USER_AGENT)
+    set -a; source "$CONF_FILE"; set +a
+    mkdir -p "./data/${INSTANCE_NAME}_data"
+
+    hr
     echo "[INFO] Starting Open WebUI..."
-    echo "======================================================================"
-    # USER_AGENT is evaluated at runtime during compose up if it contains spaces
-    USER_AGENT="${USER_AGENT}" docker compose -p "${INSTANCE_NAME}_proj" -f "$COMPOSE_FILE" up -d
-    echo "======================================================================"
+    hr
+    if container_exists; then
+        echo "[INFO] Container '${INSTANCE_NAME}' already exists, starting it..."
+        docker start "$INSTANCE_NAME" >/dev/null
+    else
+        docker run -d \
+            --name "$INSTANCE_NAME" \
+            -p "${OPENWEBUI_PORT}:8080" \
+            -v "$(pwd)/data/${INSTANCE_NAME}_data:/app/backend/data" \
+            -e WEBUI_SECRET_KEY \
+            -e OLLAMA_BASE_URL \
+            -e OPENAI_API_BASE_URL \
+            -e OPENAI_API_KEY \
+            -e HF_TOKEN \
+            -e CORS_ALLOW_ORIGIN \
+            -e USER_AGENT \
+            --add-host "host.docker.internal:host-gateway" \
+            --restart always \
+            "$IMAGE" >/dev/null
+    fi
+    hr
     echo "[SUCCESS] Open WebUI is up and running!"
-    echo "Access URL: http://<SERVER_IP>:$OPENWEBUI_PORT"
+    echo "Access URL: http://<SERVER_IP>:${OPENWEBUI_PORT} (local: http://localhost:${OPENWEBUI_PORT})"
     echo "Note: The first registered account will automatically get Administrator privileges."
-    echo "======================================================================"
+    hr
 }
 
-stop_stack() {
+do_stop() {
+    require_conf
     source "$CONF_FILE"
-    echo "======================================================================"
+    hr
     echo "[INFO] Stopping Open WebUI..."
-    echo "======================================================================"
-    [ -f "$COMPOSE_FILE" ] && docker compose -p "${INSTANCE_NAME}_proj" -f "$COMPOSE_FILE" stop
+    hr
+    docker stop "$INSTANCE_NAME" 2>/dev/null || true
 }
 
-rm_stack() {
+do_rm() {
+    require_conf
     source "$CONF_FILE"
-    echo "======================================================================"
-    echo "[INFO] Removing Open WebUI containers..."
-    echo "======================================================================"
-    [ -f "$COMPOSE_FILE" ] && docker compose -p "${INSTANCE_NAME}_proj" -f "$COMPOSE_FILE" down
+    hr
+    echo "[INFO] Removing Open WebUI container..."
+    hr
+    docker stop "$INSTANCE_NAME" 2>/dev/null || true
+    docker rm "$INSTANCE_NAME" 2>/dev/null || true
 }
 
-purge_stack() {
+do_purge() {
+    require_conf
     source "$CONF_FILE"
-    echo "======================================================================"
+    hr
     echo "[WARN] WARNING: Preparing to completely destroy Open WebUI data!"
-    echo "======================================================================"
-    [ -f "$COMPOSE_FILE" ] && docker compose -p "${INSTANCE_NAME}_proj" -f "$COMPOSE_FILE" down -v
-    
+    hr
+    docker stop "$INSTANCE_NAME" 2>/dev/null || true
+    docker rm "$INSTANCE_NAME" 2>/dev/null || true
+
     # Clean up local data directory but preserve configs
     local data_dir="./data/${INSTANCE_NAME}_data"
     if [ -d "$data_dir" ]; then
         echo "Removing local data directory..."
         rm -rf "$data_dir" 2>/dev/null || true
     fi
-    
-    echo "======================================================================"
+
+    hr
     echo "[SUCCESS] Open WebUI data has been purged (configs preserved)."
-    echo "======================================================================"
+    hr
 }
 
-status_stack() {
+do_status() {
+    require_conf
     source "$CONF_FILE"
-    [ -f "$COMPOSE_FILE" ] && docker compose -p "${INSTANCE_NAME}_proj" -f "$COMPOSE_FILE" ps
+    docker ps -a --filter "name=^${INSTANCE_NAME}$"
 }
 
-print_usage() {
+do_help() {
     echo "Usage: $0 {init|start|up|stop|rm|purge|status}"
-    echo "  init    : Generate configurations (settings.conf & compose.yml) without starting"
-    echo "  start   : Start the service containers"
-    echo "  up      : Initialize configs and start containers instantly"
-    echo "  stop    : Stop running containers"
-    echo "  rm      : Remove containers (Preserves ./data and configs)"
-    echo "  purge   : DANGER - Remove containers AND permanently delete ./data (Preserves configs)"
+    echo "  init    : Generate settings.conf and create data dir, without starting"
+    echo "  start   : Start the container (run if absent, otherwise just start it)"
+    echo "  up      : Initialize config and start the container instantly"
+    echo "  stop    : Stop the running container"
+    echo "  rm      : Remove the container (Preserves ./data and settings.conf)"
+    echo "  purge   : DANGER - Remove container AND permanently delete ./data (Preserves settings.conf)"
     echo "  status  : Show container running status"
 }
 
 case "$COMMAND" in
-    init)  init_config ;;
-    start) start_stack ;;
-    up)    init_config && start_stack ;;
-    stop)  stop_stack ;;
-    rm)    rm_stack ;;
-    purge) purge_stack ;;
-    status) status_stack ;;
-    *) print_usage ;;
+    init)   do_init ;;
+    start)  do_start ;;
+    up)     do_init && do_start ;;
+    stop)   do_stop ;;
+    rm)     do_rm ;;
+    purge)  do_purge ;;
+    status) do_status ;;
+    *)      do_help ;;
 esac

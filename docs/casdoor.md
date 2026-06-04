@@ -11,7 +11,7 @@ Casdoor 是一个支持 OAuth 2.0 / OIDC / SAML / CAS 的 UI 优先型身份与�
 
 > **关于 `casdoor` 数据库**：Casdoor 使用一个与业务库相互隔离的独立数据库（默认库名 `casdoor`，由 `config/app.conf` 的 `dataSourceName` / `dbName` 指定），首次启动时会自动初始化所需表结构。它与应用自身的业务库（例如 LobeChat 的 `postgres` 库）不是同一个库。
 
-> **独立部署提示**：单独在 `deploy/casdoor` 下 `init` 时，由于无法预知随机生成的 ParadeDB 容器名，`CASDOOR_DB_HOST` 默认渲染为占位符 `<UPDATE_ME_DB_HOST>`，必须手动改成目标数据库的容器名或 IP。通过 `deploy_apps` 级联拉起时，该值会由上层自动注入，无需手改。
+> **独立部署提示**：单独在 `deploy_apps/casdoor` 下 `init` 时，由于无法预知随机生成的 ParadeDB 容器名，`CASDOOR_DB_HOST` 默认渲染为占位符 `<UPDATE_ME_DB_HOST>`，必须手动改成目标数据库的容器名或 IP。通过上层 app（如 LobeChat）级联拉起时，该值会由上层自动注入，无需手改。
 
 ## 部署与隔离特性
 
@@ -31,9 +31,9 @@ Casdoor 是一个支持 OAuth 2.0 / OIDC / SAML / CAS 的 UI 优先型身份与�
 ## 常见操作
 
 ```bash
-cd deploy/casdoor
+cd deploy_apps/casdoor
 
-# 提示：由于 Casdoor 强依赖 DB，建议通过部署层 (Deploy) 来启动它
+# 提示：由于 Casdoor 强依赖 DB，建议通过上层 app（如 LobeChat）级联启动它
 bash cli.sh init
 bash cli.sh start
 ```

@@ -3,6 +3,8 @@ set -euo pipefail
 
 COMMAND=${1:-help}
 SERVICES_DIR="../../deploy"
+# casdoor lives under deploy_apps/ (sibling of this app), not deploy/
+APPS_DIR=".."
 CONF_FILE="settings.conf"
 COMPOSE_FILE="compose.yml"
 
@@ -94,8 +96,8 @@ init_config() {
         export CASDOOR_DB_USER="${db_user}"
         export CASDOOR_DB_PASSWORD="${db_pass}"
         export CASDOOR_DB_NAME="casdoor"
-        (cd "${SERVICES_DIR}/casdoor" && bash cli.sh init >/dev/null)
-        source "${SERVICES_DIR}/casdoor/settings.conf"
+        (cd "${APPS_DIR}/casdoor" && bash cli.sh init >/dev/null)
+        source "${APPS_DIR}/casdoor/settings.conf"
         
         casdoor_issuer="http://${CASDOOR_PUBLIC_HOST}:${CASDOOR_PORT}"
         casdoor_id="<UPDATE_ME_AFTER_CASDOOR_START>"
@@ -149,7 +151,7 @@ start_stack() {
     [ "$USE_INTERNAL_DB" = "true" ] && (cd "${SERVICES_DIR}/paradedb" && bash cli.sh start)
     [ "$USE_INTERNAL_REDIS" = "true" ] && (cd "${SERVICES_DIR}/redis" && bash cli.sh start)
     [ "$USE_INTERNAL_S3" = "true" ] && (cd "${SERVICES_DIR}/rustfs" && bash cli.sh start)
-    [ "$USE_INTERNAL_CASDOOR" = "true" ] && (cd "${SERVICES_DIR}/casdoor" && bash cli.sh start)
+    [ "$USE_INTERNAL_CASDOOR" = "true" ] && (cd "${APPS_DIR}/casdoor" && bash cli.sh start)
     
     echo "======================================================================"
     echo "[INFO] Starting LobeChat core application..."
@@ -167,7 +169,7 @@ purge_stack() {
     echo "======================================================================"
     [ -f "$COMPOSE_FILE" ] && docker compose -p "${INSTANCE_NAME}_proj" -f "$COMPOSE_FILE" down -v
     
-    [ "$USE_INTERNAL_CASDOOR" = "true" ] && (cd "${SERVICES_DIR}/casdoor" && bash cli.sh purge)
+    [ "$USE_INTERNAL_CASDOOR" = "true" ] && (cd "${APPS_DIR}/casdoor" && bash cli.sh purge)
     [ "$USE_INTERNAL_S3" = "true" ] && (cd "${SERVICES_DIR}/rustfs" && bash cli.sh purge)
     [ "$USE_INTERNAL_REDIS" = "true" ] && (cd "${SERVICES_DIR}/redis" && bash cli.sh purge)
     [ "$USE_INTERNAL_DB" = "true" ] && (cd "${SERVICES_DIR}/paradedb" && bash cli.sh purge)

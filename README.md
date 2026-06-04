@@ -16,9 +16,26 @@
 ## 项目架构
 
 本项目将部署逻辑分为三层：
-- **`deploy/` (基础部署)**：原子的、可独立运行的服务组件（如 paradedb, rustfs, casdoor, redis）。
-- **`deploy_apps/` (复合应用)**：组合多个基础服务，实现一键全栈部署（如 lobechat 全栈）。
+- **`deploy/` (基础部署)**：原子的、可独立运行的服务组件（如 paradedb, rustfs, redis）。
+- **`deploy_apps/` (复合应用)**：按用途划分的应用层组件（如 lobechat 全栈、openwebui、casdoor），可组合多个基础服务实现一键部署。
 - **`tools/` (宿主机工具)**：用于存放宿主机（非 Docker 级别的）环境配置和开发工具（如 code-server, tmux 等）。
+
+## 编排与配置设计
+
+不同复杂度的服务采用不同的容器编排方式，并以原生 docker run 为首选：
+
+- 单容器服务（如 openwebui）：直接用原生 `docker run` 管理，不依赖 docker compose，只需装了 `docker`。
+- 多服务应用（如 lobechat）：用 `docker compose` 做编排、网络与启动顺序。
+
+配置注入统一约定：`cli.sh` 先 `source settings.conf`，再用 `docker run -e VAR` 把变量透传给容器，而不是用 `--env-file` 或 `sed` 渲染。原因是 `--env-file` 不剥引号、`sed` 渲染对特殊字符脆弱，而 `source` 能让含空格/斜杠的值（如 `USER_AGENT`）正确解析，且人工手动 run 时行为与脚本一致。
+
+## 设计文档
+
+修改本项目代码或新增服务前，请先阅读 `docs/project/` 下的三份设计文档，了解统一的约定与背后原因（后续维护或 AI 协作时应以这三份为准）：
+
+- `docs/project/command.md`：cli.sh 的命令与代码设计（命令集、`do_` 前缀命名、脚本结构、`hr()` 回显规范、`start` 幂等语义）。
+- `docs/project/service.md`：服务/目录的组织与部署设计（目录即服务、单容器优先用 docker run、`source + -e` 配置注入、实例命名、网络传播）。
+- `docs/project/document.md`：服务说明文档（`docs/*.md`）的章节结构规范，以 `docs/openwebui.md` 为模板。
 
 ## 快速获取安装
 
@@ -41,7 +58,7 @@ cd deploy/paradedb
 
 **方式 1：标准部署（推荐，支持自定义配置）**
 
-首先，仅生成默认配置 `settings.conf` 和 `compose.yml`：
+首先，仅生成默认配置 `settings.conf`（单容器服务用原生 `docker run`，不再渲染 `compose.yml`）：
 
 ```bash
 bash cli.sh init
@@ -60,11 +77,10 @@ bash cli.sh up
 ```
 
 **发生了什么？**
-1. 在执行 `init` 时，脚本会自动生成 `settings.conf`，里面包含了随机分配的端口和默认的 `INSTANCE_NAME`。实例名采用 **时间戳后缀** 规则：独立部署时为 `<服务名>_<4位时间戳>`（例如 `paradedb_8421`）。
-2. 随后根据配置渲染出底层的 `compose.yml`。
-3. 执行 `start` 时，自动拉起隔离的 Docker 容器（容器名等于 `INSTANCE_NAME`，如 `paradedb_8421`；compose 项目名为 `${INSTANCE_NAME}_proj`；数据保存在 `./data/<INSTANCE_NAME>_data`，如 `./data/paradedb_8421_data`）。
+1. 在执行 `init` 时，脚本会自动生成 `settings.conf`，里面包含了随机分配的端口和默认的 `INSTANCE_NAME`，并预建数据目录 `./data/<INSTANCE_NAME>_data`。实例名采用 **时间戳后缀** 规则：独立部署时为 `<服务名>_<4位时间戳>`（例如 `paradedb_8421`）。
+2. 执行 `start` 时，`cli.sh` 先 `source settings.conf`，再用原生 `docker run` 直接拉起隔离的容器（容器名等于 `INSTANCE_NAME`，如 `paradedb_8421`；数据保存在 `./data/<INSTANCE_NAME>_data`，如 `./data/paradedb_8421_data`）。
 
-如果后续需要防端口冲突或起第二个库，只需修改 `settings.conf` 里的 `INSTANCE_NAME`/端口等参数，再执行 `bash cli.sh init && bash cli.sh start` 重载生效。
+如果后续需要防端口冲突或起第二个库，只需修改 `settings.conf` 里的 `INSTANCE_NAME`/端口等参数，再执行 `bash cli.sh rm && bash cli.sh start` 重建生效（数据在 `./data` 卷里，不会丢）。
 
 ### 场景二：一键部署全栈业务 (以 LobeChat 为例)
 
@@ -111,6 +127,20 @@ bash cli.sh up
 - **外部模式**：LobeChat 栈不会启动新的数据库容器，而是直接把外部数据库的账号密码传给 Casdoor 和 LobeChat 主程序进行连接。
 - **全局网络互通**：所有被拉起的底层组件都会自动连入同一个专属网络（如 `lobechat_network`）。
 
+### 场景三：部署单容器应用 (以 Open WebUI 为例)
+
+Open WebUI 是单容器服务，不依赖 docker compose，可直接一键拉起：
+
+```bash
+cd deploy_apps/openwebui
+bash cli.sh up
+```
+
+**发生了什么？**
+1. `init` 生成 `settings.conf`（随机端口、随机密钥、时间戳实例名），并预建数据目录 `./data/<INSTANCE_NAME>_data`，不渲染 `compose.yml`。
+2. `start` 时 `cli.sh` 先 `source settings.conf`，再用 `docker run` 直接拉起容器，把配置通过 `-e VAR` 透传进去。
+3. 修改 `settings.conf` 后，需先 `bash cli.sh rm` 再 `bash cli.sh start` 重建生效（数据在 `./data` 卷里，不会丢）。
+
 ## 常用管理命令
 
 所有目录下的 `cli.sh` 都遵循相同的命令规范。
@@ -149,3 +179,16 @@ bash cli.sh purge
 ```bash
 bash cli.sh status
 ```
+
+## 已知 TODO / 待优化
+
+### 各 `cli.sh` 重复样板代码（与"目录即服务"冲突，待定方案）
+
+当前每个服务目录的 `cli.sh` 都重复实现了几乎一致的样板：`random_port` / `stop` / `rm` / `purge` / `status` / `case` 派发 / `print_usage`，连 `random_secret` 长度都各写各的。这违反 DRY，但抽公共库又会破坏"拷贝单个目录即带走全部资产"的核心理念。
+
+候选方案（尚未决策）：
+- **方案 A（现状）**：保留重复，换取目录自包含。维护成本高。
+- **方案 B（根级共享库）**：新增 `lib/common.sh`，各 `cli.sh` 通过相对路径 `source`。代价：单目录拷贝会丢失 lib，破坏自包含。**注意**：`.gitignore` 第 17 行的 `lib/`（Python 打包规则）会误伤根级 `lib/` 目录，启用前需加例外。
+- **方案 C（init 时注入）**：`install.sh` 或各 `cli.sh` 的 `init` 把 `lib/common.sh` 拷贝进当前目录，兼顾 DRY 与自包含，但引入"生成物"的同步复杂度。
+
+倾向方案 C，待确认后实施。

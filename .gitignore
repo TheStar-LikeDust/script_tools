@@ -311,7 +311,7 @@ deploy_apps/*/compose.yml
 tools/*/settings.conf
 
 # Casdoor rendered app config
-deploy/casdoor/config/
+deploy_apps/casdoor/config/
 
 # Persistent data directories
 deploy/*/data/
