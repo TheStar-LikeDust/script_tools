@@ -14,7 +14,7 @@ ParadeDB 组件是我们架构中的核心关系型数据库底座。为了深�
 
 ## 核心配置项 (`settings.conf`)
 
-执行 `./cli.sh init` 之后会生成配置文件，其中主要变量如下：
+执行 `bash cli.sh init` 之后会生成配置文件，其中主要变量如下：
 
 - `INSTANCE_NAME`: 实例前缀（默认 `paradedb`）
 - `DB_PORT`: 暴露给宿主机的随机端口

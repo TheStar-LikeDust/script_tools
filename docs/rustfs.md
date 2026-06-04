@@ -12,7 +12,7 @@ RustFS 是一款高性能、兼容 Amazon S3 的对象存储服务器。在当�
 
 ## 核心配置项 (`settings.conf`)
 
-执行 `./cli.sh init` 之后会生成配置文件，其中主要变量如下：
+执行 `bash cli.sh init` 之后会生成配置文件，其中主要变量如下：
 
 - `INSTANCE_NAME`: 实例前缀（默认 `rustfs`）
 - `RUSTFS_PORT`: API 服务对宿主机的暴露端口

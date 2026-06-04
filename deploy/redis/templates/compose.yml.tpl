@@ -4,7 +4,7 @@ services:
     container_name: {{INSTANCE_NAME}}
     restart: unless-stopped
     ports:
-      - "{{REDIS_PORT}:6379"
+      - "{{REDIS_PORT}}:6379"
     command: redis-server --save 60 1000 --appendonly yes
     volumes:
       - ./data/{{INSTANCE_NAME}}_data:/data

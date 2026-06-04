@@ -4,8 +4,8 @@ services:
     container_name: {{INSTANCE_NAME}}_rustfs
     restart: unless-stopped
     ports:
-      - "{{RUSTFS_PORT}:9000"
-      - "{{RUSTFS_ADMIN_PORT}:9001"
+      - "{{RUSTFS_PORT}}:9000"
+      - "{{RUSTFS_ADMIN_PORT}}:9001"
     environment:
       RUSTFS_CONSOLE_ENABLE: "true"
       RUSTFS_ACCESS_KEY: "{{RUSTFS_ACCESS_KEY}}"

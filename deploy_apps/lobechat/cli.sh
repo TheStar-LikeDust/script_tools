@@ -133,7 +133,7 @@ init_config() {
     echo "[IMPORTANT] Since SSO is enabled, LobeChat needs Casdoor Client ID."
     echo "Recommended next steps:"
     echo "  1. Review settings.conf"
-    echo "  2. Run './cli.sh start' to bring up all services"
+    echo "  2. Run 'bash cli.sh start' to bring up all services"
     echo "  3. LobeChat might report an auth error initially - this is normal"
     echo "  4. Login to Casdoor Admin UI, create an application for LobeChat"
     echo "  5. Replace <UPDATE_ME...> in $COMPOSE_FILE with your new Client ID & Secret"

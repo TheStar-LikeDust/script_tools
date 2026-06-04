@@ -4,7 +4,7 @@ services:
     container_name: {{INSTANCE_NAME}}
     restart: unless-stopped
     ports:
-      - "{{DB_PORT}:5432"
+      - "{{DB_PORT}}:5432"
     environment:
       POSTGRES_USER: "{{DB_USER}}"
       POSTGRES_PASSWORD: "{{DB_PASSWORD}}"

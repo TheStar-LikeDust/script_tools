@@ -16,7 +16,7 @@ Casdoor 是一个支持 OAuth 2.0 / OIDC / SAML / CAS 的 UI 优先型身份与�
 
 ## 核心配置项 (`settings.conf`)
 
-执行 `./cli.sh init` 之后会生成配置文件，其中主要变量如下：
+执行 `bash cli.sh init` 之后会生成配置文件，其中主要变量如下：
 
 - `INSTANCE_NAME`: 实例前缀（默认 `casdoor`）
 - `CASDOOR_PORT`: 对外暴露的 Web UI / API 端口

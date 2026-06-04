@@ -33,10 +33,10 @@
 *规范示例：*
 ```bash
 # 错误做法：仅抛出简单的字符串
-# Usage: ./cli.sh [init|start|up|stop|rm|purge|status]
+# Usage: bash cli.sh [init|start|up|stop|rm|purge|status]
 
 # 正确做法：必须带说明
-Usage: ./cli.sh {init|start|up|stop|rm|purge|status}
+Usage: bash cli.sh {init|start|up|stop|rm|purge|status}
   init    : Generate configurations (settings.conf & compose.yml) without starting
   start   : Start the service containers
   up      : Initialize configs and start containers instantly

@@ -4,7 +4,7 @@ services:
     container_name: {{INSTANCE_NAME}}
     restart: unless-stopped
     ports:
-      - "{{CASDOOR_PORT}:8000"
+      - "{{CASDOOR_PORT}}:8000"
     environment:
       RUNNING_IN_DOCKER: "true"
     volumes:
