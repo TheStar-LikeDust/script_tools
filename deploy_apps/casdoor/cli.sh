@@ -4,26 +4,16 @@ set -euo pipefail
 COMMAND=${1:-help}
 shift || true
 
-# Optional flag (only meaningful for init/up): use an external DB instead of bundling paradedb
-MODE_EXTERNAL="false"
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --external) MODE_EXTERNAL="true"; shift ;;
-        *) echo "[ERROR] [Casdoor] Unknown argument: $1"; exit 1 ;;
-    esac
-done
-
 # Anchor paths to this script's own location (cwd-independent, move-safe)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TPL_DIR="$SCRIPT_DIR/templates"
 CONF_FILE="$SCRIPT_DIR/settings.conf"
-APP_CONF="$SCRIPT_DIR/config/app.conf"
 IMAGE="casbin/casdoor:latest"
 
 # Bundled DB is delegated to deploy/paradedb's cli.sh like a function call;
 # its config + data live under THIS directory via --conf.
 PARADEDB_CLI="$SCRIPT_DIR/../../deploy/paradedb/cli.sh"
-PG_CONF="$SCRIPT_DIR/casdoor_paradedb.conf"
+PG_CONF="$SCRIPT_DIR/settings_paradedb.conf"
 deploy_paradedb() { local sub="$1"; shift; bash "$PARADEDB_CLI" "$sub" --conf "$PG_CONF" "$@"; }
 
 hr() { echo "======================================================================"; }
@@ -37,6 +27,14 @@ require_conf() {
 }
 
 container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
+
+# App-collection services bundle their DB on a user-defined network so containers
+# talk by name (avoids host-gateway / host firewall issues). Base services stay network-agnostic.
+ensure_network() { docker network inspect "$1" >/dev/null 2>&1 || docker network create "$1" >/dev/null; }
+
+# app.conf lives in a dedicated config dir, parallel to the data dir, so config never
+# mixes with runtime data (needs INSTANCE_NAME sourced)
+app_conf_path() { echo "$SCRIPT_DIR/data/${INSTANCE_NAME}_config/app.conf"; }
 
 # Read one value from the bundled paradedb config without clobbering casdoor's own vars
 pg_val() {
@@ -54,8 +52,9 @@ render_app_conf() {
     source "$CONF_FILE"
     local db_host db_port db_user db_pass db_bootstrap
     if [ "$WITH_BUNDLED_DB" = "true" ]; then
-        db_host="host.docker.internal"
-        db_port="$(pg_val port)"
+        # Same user-defined network: reach paradedb by container name on its internal port
+        db_host="$(pg_val container)"
+        db_port="5432"
         db_user="$(pg_val user)"
         db_pass="$(pg_val pass)"
         db_bootstrap="$(pg_val bootstrap)"
@@ -67,14 +66,15 @@ render_app_conf() {
         db_bootstrap="$EXT_DB_NAME"
     fi
 
-    mkdir -p "$SCRIPT_DIR/config"
+    local app_conf; app_conf="$(app_conf_path)"
+    mkdir -p "$(dirname "$app_conf")"
     sed -e "s#{{CASDOOR_DB_USER}}#${db_user}#g" \
         -e "s#{{CASDOOR_DB_PASSWORD}}#${db_pass}#g" \
         -e "s#{{CASDOOR_DB_HOST}}#${db_host}#g" \
         -e "s#{{CASDOOR_DB_PORT}}#${db_port}#g" \
         -e "s#{{CASDOOR_DB_BOOTSTRAP}}#${db_bootstrap}#g" \
         -e "s#{{CASDOOR_DB_NAME}}#${CASDOOR_DB_NAME}#g" \
-        "$TPL_DIR/app.conf.tpl" > "$APP_CONF"
+        "$TPL_DIR/app.conf.tpl" > "$app_conf"
 }
 
 # Wait until the bundled DB container reports healthy (best effort)
@@ -91,6 +91,15 @@ wait_pg() {
 }
 
 do_init() {
+    # --external is an init-only flag; it just records WITH_BUNDLED_DB in settings.conf
+    local mode_external="false"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --external) mode_external="true"; shift ;;
+            *) echo "[ERROR] [Casdoor] Unknown init argument: $1"; exit 1 ;;
+        esac
+    done
+
     hr
     echo "[INFO] [Casdoor] Initializing configuration..."
     hr
@@ -100,7 +109,7 @@ do_init() {
         local ts=$(date +%s)
         local suffix=${ts: -4}
         local with_db="true"
-        if [ "$MODE_EXTERNAL" = "true" ]; then with_db="false"; fi
+        if [ "$mode_external" = "true" ]; then with_db="false"; fi
 
         sed -e "s/{{INSTANCE_NAME}}/casdoor_${suffix}/g" \
             -e "s/{{CASDOOR_PORT}}/${port}/g" \
@@ -110,7 +119,7 @@ do_init() {
 
     source "$CONF_FILE"
 
-    # Bundled DB: delegate to deploy/paradedb (creates casdoor_paradedb.conf + data here)
+    # Bundled DB: delegate to deploy/paradedb (creates settings_paradedb.conf + data here)
     if [ "$WITH_BUNDLED_DB" = "true" ]; then
         deploy_paradedb init --name "paradedb_${INSTANCE_NAME}"
     fi
@@ -125,7 +134,7 @@ do_init() {
     echo "[SUCCESS] [Casdoor] Initialization completed!"
     hr
     if [ "$WITH_BUNDLED_DB" = "true" ]; then
-        echo "[INFO] Bundled paradedb config: casdoor_paradedb.conf (managed by deploy/paradedb)"
+        echo "[INFO] Bundled paradedb config: settings_paradedb.conf (managed by deploy/paradedb)"
         echo "[INFO] Run 'bash cli.sh start' to bring up DB + Casdoor."
     else
         echo "[IMPORTANT] External DB mode: fill EXT_DB_* in settings.conf, then 'bash cli.sh start'."
@@ -140,10 +149,16 @@ do_start() {
     # Always re-render app.conf so edits to settings.conf take effect on start
     render_app_conf
 
-    # Bring up bundled DB first and wait until healthy
+    local net="${INSTANCE_NAME}_net"
+    local net_args=()
+
+    # Bring up bundled DB, attach it to the app network, wait until healthy
     if [ "$WITH_BUNDLED_DB" = "true" ]; then
+        ensure_network "$net"
         deploy_paradedb start
+        docker network connect "$net" "$(pg_val container)" 2>/dev/null || true
         wait_pg "$(pg_val container)"
+        net_args=(--network "$net")
     fi
 
     mkdir -p "$SCRIPT_DIR/data/${INSTANCE_NAME}_data"
@@ -157,10 +172,10 @@ do_start() {
     else
         docker run -d \
             --name "$INSTANCE_NAME" \
+            "${net_args[@]}" \
             -p "${CASDOOR_PORT}:8000" \
-            --add-host host.docker.internal:host-gateway \
             -e RUNNING_IN_DOCKER=true \
-            -v "$APP_CONF:/conf/app.conf" \
+            -v "$(app_conf_path):/conf/app.conf" \
             -v "$SCRIPT_DIR/data/${INSTANCE_NAME}_data:/data" \
             --restart unless-stopped \
             "$IMAGE" >/dev/null
@@ -188,7 +203,10 @@ do_rm() {
     hr
     docker stop "$INSTANCE_NAME" 2>/dev/null || true
     docker rm "$INSTANCE_NAME" 2>/dev/null || true
-    [ "$WITH_BUNDLED_DB" = "true" ] && deploy_paradedb rm || true
+    if [ "$WITH_BUNDLED_DB" = "true" ]; then
+        deploy_paradedb rm
+        docker network rm "${INSTANCE_NAME}_net" 2>/dev/null || true
+    fi
 }
 
 do_purge() {
@@ -201,12 +219,20 @@ do_purge() {
     docker rm "$INSTANCE_NAME" 2>/dev/null || true
 
     local data_dir="$SCRIPT_DIR/data/${INSTANCE_NAME}_data"
+    local config_dir="$SCRIPT_DIR/data/${INSTANCE_NAME}_config"
     if [ -d "$data_dir" ]; then
         echo "Removing local data directory..."
         rm -rf "$data_dir" 2>/dev/null || true
     fi
+    if [ -d "$config_dir" ]; then
+        echo "Removing rendered config directory..."
+        rm -rf "$config_dir" 2>/dev/null || true
+    fi
 
-    [ "$WITH_BUNDLED_DB" = "true" ] && deploy_paradedb purge || true
+    if [ "$WITH_BUNDLED_DB" = "true" ]; then
+        deploy_paradedb purge
+        docker network rm "${INSTANCE_NAME}_net" 2>/dev/null || true
+    fi
 
     hr
     echo "[SUCCESS] [Casdoor] Data purged (configs preserved)."
@@ -235,9 +261,9 @@ do_help() {
 }
 
 case "$COMMAND" in
-    init)   do_init ;;
+    init)   do_init "$@" ;;
     start)  do_start ;;
-    up)     do_init && do_start ;;
+    up)     do_init "$@" && do_start ;;
     stop)   do_stop ;;
     rm)     do_rm ;;
     purge)  do_purge ;;
