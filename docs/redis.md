@@ -6,35 +6,50 @@
 
 使用官方 `redis:7-alpine` 镜像，默认开启 AOF 与 RDB 持久化，单容器即可独立运行，无需任何外部组件。
 
-## 2. 部署特性
+## 2. 功能
 
-- 持久化默认开启：启动命令带 `--save 60 1000 --appendonly yes`，同时启用 RDB 快照与 AOF。
-- 健康检查：容器内置 `redis-cli ping` 健康探测。
-- 作为子服务嵌入：支持通过 `--conf` 和 `--name` 参数被上层应用（如 LobeChat）像调用函数一样嵌入，将配置与数据托管至上层目录。
+- 持久化防丢保护
+  - 问题：原版 Redis 容器默认不开启持久化，容器重启极易造成缓存或会话丢失。
+  - 方案：启动命令硬编码带上 `--save 60 1000 --appendonly yes`，同时启用 RDB 快照与 AOF，开箱即提供生产级的数据保护。
+- 服务级连通状态
+  - 需求：如何判断 Redis 已经完全载入内存并可被其他组件调用。
+  - 方案：容器内置 `redis-cli ping` 探测探针，能真实反映其实际对外提供响应的服务状态。
+- 全局通用功能支持
+  - 子组件嵌入：支持通过 `--conf` 和 `--name` 参数被上层应用像普通函数组件一样级联拉起，实现下沉组件数据的干净沙箱化（详情参见 `docs/project/service.md`）。
 
-## 3. 核心配置项 (settings.conf)
+## 3. 核心配置项
 
-执行 `bash cli.sh init` 后生成，主要变量：
+### settings.conf
+
+缓存服务主配置：
 
 - `INSTANCE_NAME`: 实例名（时间戳后缀，如 `redis_8421`），决定容器名与数据目录。
 - `REDIS_PORT`: 暴露给宿主机的随机端口（容器内为 `6379`）。
 
 ## 4. 备注
 
-- 无密码：默认不设访问密码，仅适合本机或受信网络。对外暴露时建议自行加 `--requirepass` 或前置网络隔离。
-- 数据本地化：持久化文件仅保存在本地 `./data/<实例名>_data`，迁移时与 `settings.conf` 一起打包。
+- 无密访问警告：为方便同级容器内网直通，默认未设置 Redis 访问密码。仅建议在隔离的自定义网络或本机信任网络内使用，若对外暴露需自行在启动命令中增加 `--requirepass`。
 
 ## 5. 快速执行
 
 ```bash
 cd deploy/redis
 
-# 一键拉起（init + start）
-bash cli.sh up
-
-# 或分步：先生成配置、按需改 settings.conf，再启动
+# 常规分步拉起（推荐）：先生成配置、按需修改 settings.conf 后再启动
 bash cli.sh init
 bash cli.sh start
+
+# 一键拉起（跳过配置直接启动）
+bash cli.sh up
+
+# 停止运行
+bash cli.sh stop
+
+# 销毁容器（保留配置与 data/ 数据目录）
+bash cli.sh rm
+
+# 危险操作：彻底销毁容器，并删除挂载的 data/ 数据目录
+bash cli.sh purge
 ```
 
 ## 6. 命令解释

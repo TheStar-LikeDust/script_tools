@@ -295,10 +295,9 @@ result.png
 # PyPI configuration file
 .pypirc
 
-# auto spider projects
+# llm records/memory/plan 
+llm_workspace/
 
-# target pictures folder 
-target_pictures
 
 # ==============================================================================
 # script_tools generated artifacts (rendered by cli.sh init, must not be committed)

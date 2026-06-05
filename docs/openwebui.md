@@ -6,12 +6,19 @@
 
 它使用内置 SQLite 存储，无需任何外部数据库即可独立运行。
 
-## 2. 部署特性
+## 2. 功能
 
-- 轻量独立：单容器架构，不被任何上层应用嵌入，因此不支持委托级联参数。
-- Ollama 互通：容器内置了 `host-gateway` 的附加路由，以便直连宿主机上的本地 Ollama 实例。
+- 容器直通网关
+  - 场景：容器通常无法直接访问宿主机的 localhost，导致无法连接本地运行的 Ollama 模型。
+  - 方案：启动命令内置 `--add-host host.docker.internal:host-gateway` 路由映射，容器可借此安全穿透访问宿主机的 Ollama 接口。
+- 全局通用功能支持
+  - 纯体应用：作为最上层应用且无复杂组件依赖，不创建自定义网络或嵌入任何子组件，保持最简化的原生桥接运行（详情参见 `docs/project/service.md`）。
 
-## 3. 核心配置项 (settings.conf)
+## 3. 核心配置项
+
+### settings.conf
+
+面板主配置：
 
 - `INSTANCE_NAME`: 实例名（时间戳后缀，如 `openwebui_8421`），决定容器名与数据目录。
 - `OPENWEBUI_PORT`: 面板对外暴露的宿主机端口。
@@ -24,20 +31,28 @@
 
 ## 4. 备注
 
-- 首次登录即管理员：第一个注册的账户自动获得管理员权限；之后注册的用户初始为 Pending，需管理员审批。
-- 数据本地化：聊天记录与密码默认仅保存在本地 `./data/` 目录，不外传。
+- 首次登录即管理员：Open WebUI 内部机制设定第一个注册的账户自动获得管理员权限；后续注册用户初始状态均为 Pending，需管理员手动审批。
 
 ## 5. 快速执行
 
 ```bash
 cd deploy_apps/openwebui
 
-# 一键拉起（init + start）
-bash cli.sh up
-
-# 或分步：先生成配置、按需改 settings.conf，再启动
+# 常规分步拉起（推荐）：先生成配置、按需修改 settings.conf 后再启动
 bash cli.sh init
 bash cli.sh start
+
+# 一键拉起（跳过配置直接启动）
+bash cli.sh up
+
+# 停止运行
+bash cli.sh stop
+
+# 销毁容器（保留配置与 data/ 数据目录）
+bash cli.sh rm
+
+# 危险操作：彻底销毁容器，并删除挂载的 data/ 数据目录
+bash cli.sh purge
 ```
 
 ## 6. 命令解释

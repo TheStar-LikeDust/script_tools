@@ -6,16 +6,22 @@
 
 使用 `rustfs/rustfs:latest` 镜像，单容器即可独立运行，自带 Web 控制台，无需任何外部组件。
 
-## 2. 部署特性
+## 2. 功能
 
-- 多端口分离：同时暴露 S3 API 端口（应用调用）与 Console 端口（Web 管理界面）。
-- 自带控制台：浏览器访问 Console 端口即可可视化管理 Bucket 与 Object。
-- 健康检查：容器内置 `/health` 探测，便于判断服务是否就绪。
-- 作为子服务嵌入：支持通过 `--conf` 和 `--name` 参数被上层应用（如 LobeChat）像调用函数一样嵌入，将配置与数据托管至上层目录。
+- 多端口 API 控制隔离
+  - 问题：通常 S3 API 和 Web 管理后台混用端口会导致对外映射权限划分不清晰。
+  - 方案：通过不同端口将应用层读写调用的 S3 端口和人工登入查看的 Console 管理端口分离暴露，更加安全清晰。
+- 极简控制台赋能
+  - 痛点：很多极轻量 S3 竞品没有界面，全靠命令敲击十分不便。
+  - 方案：RustFS 容器内建了可视化管理层，直接浏览器访问对应管理口即可查阅 Bucket 和对象文件。
+- 全局通用功能支持
+  - 子组件嵌入：支持通过 `--conf` 和 `--name` 参数被上层应用（如大模型客户端等）当做子组件嵌入部署，实现沙箱化的数据挂靠隔离（详情参见 `docs/project/service.md`）。
 
-## 3. 核心配置项 (settings.conf)
+## 3. 核心配置项
 
-执行 `bash cli.sh init` 后生成，主要变量：
+### settings.conf
+
+S3 服务主配置：
 
 - `INSTANCE_NAME`: 实例名（时间戳后缀，如 `rustfs_8421`），决定容器名与数据目录。
 - `RUSTFS_PORT`: S3 API 对宿主机暴露的端口（容器内为 `9000`）。
@@ -25,20 +31,28 @@
 
 ## 4. 备注
 
-- 不自动建桶：本服务只提供纯净的对象存储，启动后默认没有任何 Bucket。需要 Bucket 时，可通过控制台 UI 手动创建，或由上层应用按需创建。
-- 数据本地化：对象数据仅保存在本地 `./data/<实例名>_data`，迁移时与 `settings.conf` 一起打包。
+- 不提供初始存储桶：本服务仅提供底层的 S3 对象存储实例，启动后默认没有任何 Bucket。对接应用时需人工登录 Admin 控制台或通过业务代码创建所需 Bucket 后方可读写。
 
 ## 5. 快速执行
 
 ```bash
 cd deploy/rustfs
 
-# 一键拉起（init + start）
-bash cli.sh up
-
-# 或分步：先生成配置、按需改 settings.conf，再启动
+# 常规分步拉起（推荐）：先生成配置、按需修改 settings.conf 后再启动
 bash cli.sh init
 bash cli.sh start
+
+# 一键拉起（跳过配置直接启动）
+bash cli.sh up
+
+# 停止运行
+bash cli.sh stop
+
+# 销毁容器（保留配置与 data/ 数据目录）
+bash cli.sh rm
+
+# 危险操作：彻底销毁容器，并删除挂载的 data/ 数据目录
+bash cli.sh purge
 ```
 
 ## 6. 命令解释
