@@ -1,31 +1,31 @@
-# Casdoor
+# Casdoor 部署 (Deploy)
 
-## 服务简介
+## 1. 简介
 
-Casdoor 是一个支持 OAuth 2.0 / OIDC / SAML / CAS 的 UI 优先型身份与访问管理（IAM）平台，承担统一用户认证、单点登录（SSO）与权限中心的角色。它使用 `casbin/casdoor` 镜像，单容器即可运行，本身不存储业务数据，**强依赖一个 PostgreSQL**。
+> Casdoor 是一个支持 OAuth 2.0 / OIDC / SAML / CAS 的 UI 优先型身份与访问管理（IAM）平台，作为多应用架构的统一认证入口，提供开箱即用的集中式登录页、用户管理看板以及单点登录（SSO）与细粒度权限控制。
 
-与基础服务一样，Casdoor 用原生 `docker run` 管理，不依赖 docker compose。
+它使用 `casbin/casdoor` 镜像，单容器即可运行，本身不存储业务数据，强依赖一个 PostgreSQL。
 
-## 两种部署模式
+## 2. 部署特性
 
 `init` 时二选一，由 `settings.conf` 的 `WITH_BUNDLED_DB` 开关记录，`start` 据此决定是否附带拉起数据库：
 
-- **附带数据库（默认）**：`bash cli.sh init`。Casdoor 顺带「附带执行」一套 `deploy/paradedb` 的 cli 命令，在**本目录**托管一个 paradedb 实例（命名 `paradedb_casdoor_<时间戳>`，与 casdoor 共享时间戳）。Casdoor 自身不管理任何 PG 设置——端口、密码等全部由 paradedb 的 cli 与它自己的配置文件 `settings_paradedb.conf` 负责，Casdoor 只在渲染 `app.conf` 时读回连接信息。
-- **外部数据库**：`bash cli.sh init --external`。不附带 paradedb，连接你在 `settings.conf` 的 `EXT_DB_*` 里填写的外部 PG（如云数据库）。
+- 附带数据库（默认）：`bash cli.sh init`。Casdoor 顺带「附带执行」一套 `deploy/paradedb` 的 cli 命令，在本目录托管一个 paradedb 实例（命名 `paradedb_casdoor_<时间戳>`，与 casdoor 共享时间戳）。Casdoor 自身不管理任何 PG 设置——端口、密码等全部由 paradedb 的 cli 与它自己的配置文件 `settings_paradedb.conf` 负责，Casdoor 只在渲染 `app.conf` 时读回连接信息。
+- 外部数据库：`bash cli.sh init --external`。不附带 paradedb，连接在 `settings.conf` 的 `EXT_DB_*` 里填写的外部 PG（如云数据库）。
 
-> **委托关系**：附带模式本质是把 `deploy/paradedb/cli.sh` 当函数调用：`init/start/stop/rm/purge/status` 都会带上 `--conf settings_paradedb.conf` 转发给它，详见 `docs/paradedb.md` 的「作为子服务嵌入」。
+> 委托关系：附带模式本质是把 `deploy/paradedb/cli.sh` 当函数调用：`init/start/stop/rm/purge/status` 都会带上 `--conf settings_paradedb.conf` 转发给它，详见 `docs/paradedb.md` 的「作为子服务嵌入」。
 
-> **运行期连通（附带模式）**：`start` 时创建一个 app 级 user-defined network `${INSTANCE_NAME}_net`，把附带的 paradedb 容器 `docker network connect` 进来，casdoor 也以 `--network` 加入；二者通过**容器名 + 内部端口 5432** 直连。这样绕开 Linux 上 `host-gateway` / 宿主机防火墙导致的连接超时。网络概念只存在于 app 集合服务，基础服务 `deploy/paradedb` 保持网络无关。
+> 运行期连通（附带模式）：`start` 时创建一个 app 级 user-defined network `${INSTANCE_NAME}_net`，把附带的 paradedb 容器 `docker network connect` 进来，casdoor 也以 `--network` 加入；二者通过容器名 + 内部端口 5432 直连。这样绕开 Linux 上 `host-gateway` / 宿主机防火墙导致的连接超时。网络概念只存在于 app 集合服务，基础服务 `deploy/paradedb` 保持网络无关。
 
-> **运行期连通（外部模式）**：不加自定义网络，casdoor 走默认 bridge，直接连 `EXT_DB_*` 指向的外部地址。
+> 运行期连通（外部模式）：不加自定义网络，casdoor 走默认 bridge，直接连 `EXT_DB_*` 指向的外部地址。
 
-> **关于 `casdoor` 数据库**：`app.conf` 的 `dataSourceName` 连接的是 bootstrap 库（通常 `postgres`），`dbName` 才是 Casdoor 实际使用的应用库（默认 `casdoor`）。首次启动时 Casdoor 自动创建该应用库并初始化表结构。
+> 关于 `casdoor` 数据库：`app.conf` 的 `dataSourceName` 连接的是 bootstrap 库（通常 `postgres`），`dbName` 才是 Casdoor 实际使用的应用库（默认 `casdoor`）。首次启动时 Casdoor 自动创建该应用库并初始化表结构。
 
-## 配置文件
+## 3. 核心配置项 (settings.conf)
 
 附带模式下目录里有两个配置文件（均为生成物，已被 `.gitignore` 忽略）：
 
-`settings.conf`（Casdoor 自身，你主要编辑这个）：
+`settings.conf`（Casdoor 自身，主要编辑此文件）：
 
 - `INSTANCE_NAME`: 实例名（时间戳后缀，如 `casdoor_8421`），决定容器名与数据目录。
 - `CASDOOR_PORT`: 对外暴露的 Web UI / API 端口（容器内 `8000`）。
@@ -33,9 +33,14 @@ Casdoor 是一个支持 OAuth 2.0 / OIDC / SAML / CAS 的 UI 优先型身份与�
 - `WITH_BUNDLED_DB`: `true` 附带 paradedb / `false` 用外部库。
 - `EXT_DB_HOST` / `EXT_DB_PORT` / `EXT_DB_USER` / `EXT_DB_PASSWORD` / `EXT_DB_NAME`: 仅外部模式使用，`EXT_DB_NAME` 为 bootstrap 库（通常 `postgres`）。
 
-`settings_paradedb.conf`（附带模式下由 paradedb cli 生成，你一般不用动）：含该 paradedb 实例的 `INSTANCE_NAME`、`DB_PORT`、`DB_USER`、`DB_PASSWORD`、`DB_NAME`。
+`settings_paradedb.conf`（附带模式下由 paradedb cli 生成，一般无需修改）：含该 paradedb 实例的 `INSTANCE_NAME`、`DB_PORT`、`DB_USER`、`DB_PASSWORD`、`DB_NAME`。
 
-## 快速执行
+## 4. 备注
+
+- `app.conf` 是什么 / 放哪：它是喂给 casdoor 程序本体的 INI 配置（生成物，由 `settings.conf` + DB 连接渲染而来），落在该实例的独立配置目录 `data/casdoor_<时间戳>_config/app.conf`，与运行数据目录 `data/casdoor_<时间戳>_data/` 平级并列、互不混淆，启动时挂载为容器内 `/conf/app.conf`。与 `settings.conf`（本 cli 的配置）、`settings_paradedb.conf`（附带库的配置）职责不同。
+- app.conf 会被覆盖：`start` 每次按 `settings.conf` 重渲 app.conf（截断重写、保持 inode，不会断开正在使用的 bind mount）。`_config` 只放 app.conf、`_data` 只放 casdoor 运行数据，容器内分别挂为 `/conf/app.conf` 与 `/data`；`purge` 会同时删除这两个目录，但保留根目录的 `settings.conf` / `settings_paradedb.conf`。请勿手改 app.conf，要调整改 `settings.conf`。
+
+## 5. 快速执行
 
 ```bash
 cd deploy_apps/casdoor
@@ -52,7 +57,7 @@ bash cli.sh init --external
 bash cli.sh start
 ```
 
-## 命令解释
+## 6. 命令解释
 
 路径锚定：脚本运行时计算自身所在目录 `SCRIPT_DIR`，配置/数据均在该目录下，配置里不写死绝对路径，便于整体复制/移动。附带的 paradedb 通过 `--conf "$SCRIPT_DIR/settings_paradedb.conf"` 调用，数据落在 `$SCRIPT_DIR/data/` 下。
 
@@ -148,10 +153,8 @@ docker network rm "${INSTANCE_NAME}_net"                                        
 
 打印 Usage 帮助。
 
-## 其他补充
+## 7. 其他补充
 
-- **镜像版本**：当前固定 `casbin/casdoor:latest`，需可复现可锁定具体标签。
-- **外部反代**：可在 Docker 外层嵌套 Nginx 实现域名与 HTTPS。
-- **依赖 repo 结构**：附带模式通过相对路径 `../../deploy/paradedb` 定位 paradedb 脚本（脚本为共享代码）；casdoor 目录里的配置与数据是可随目录迁移的资产，整体搬迁请连同 repo 一起。
-- **`app.conf` 是什么 / 放哪**：它是喂给 casdoor 程序本体的 INI 配置（生成物，由 `settings.conf` + DB 连接渲染而来），落在该实例的独立配置目录 `data/casdoor_<时间戳>_config/app.conf`，与运行数据目录 `data/casdoor_<时间戳>_data/` 平级并列、互不混淆，启动时挂载为容器内 `/conf/app.conf`。与 `settings.conf`（本 cli 的配置）、`settings_paradedb.conf`（附带库的配置）职责不同。
-- **app.conf 会被覆盖**：`start` 每次按 `settings.conf` 重渲 app.conf（截断重写、保持 inode，不会断开正在使用的 bind mount）。`_config` 只放 app.conf、`_data` 只放 casdoor 运行数据，容器内分别挂为 `/conf/app.conf` 与 `/data`；`purge` 会同时删除这两个目录，但保留根目录的 `settings.conf` / `settings_paradedb.conf`。请勿手改 app.conf，要调整改 `settings.conf`。
+- 镜像版本：当前固定 `casbin/casdoor:latest`，需可复现可锁定具体标签。
+- 外部反代：可在 Docker 外层嵌套 Nginx 实现域名与 HTTPS。
+- 依赖 repo 结构：附带模式通过相对路径 `../../deploy/paradedb` 定位 paradedb 脚本（脚本为共享代码）；casdoor 目录里的配置与数据是可随目录迁移的资产，整体搬迁请连同 repo 一起。

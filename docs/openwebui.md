@@ -1,20 +1,17 @@
 # Open WebUI 部署 (Deploy)
 
-## 服务简介
+## 1. 简介
 
-Open WebUI 是一款用于大语言模型的现代化可视化交互面板，支持对接 OpenAI / Ollama / Anthropic 等多种模型提供商，并自带工具链与 RAG 能力。它使用内置 SQLite 存储，无需任何外部数据库即可独立运行。
+> Open WebUI 是一款用于大语言模型的现代化可视化交互面板，支持对接多种模型提供商并自带工具链与 RAG 能力，作为独立面板提供对话界面。
 
-## 部署特性
+它使用内置 SQLite 存储，无需任何外部数据库即可独立运行。
 
-- 轻量独立：单容器，无需 PostgreSQL / Redis 等外部组件。
-- 资产内聚：用户数据、对话记录、上传文件全部落在 `./data/<实例名>_data`，拷贝目录即带走全部资产。
-- 多开隔离：通过 `INSTANCE_NAME` 与端口隔离，同机可起多个面板实例。
-- 不依赖 docker compose：单容器直接用原生 `docker run` 管理，只需装了 `docker` 即可。`settings.conf` 是唯一配置源，由 `cli.sh` `source` 后通过 `-e VAR` 透传给容器；含空格或斜杠的值（如 `USER_AGENT`）不会出错。
-- Ollama 互通：内置 `--add-host host.docker.internal:host-gateway`，可直连宿主机上的 Ollama。
+## 2. 部署特性
 
-## 核心配置项 (`settings.conf`)
+- 轻量独立：单容器架构，不被任何上层应用嵌入，因此不支持委托级联参数。
+- Ollama 互通：容器内置了 `host-gateway` 的附加路由，以便直连宿主机上的本地 Ollama 实例。
 
-执行 `bash cli.sh init` 后生成，主要变量：
+## 3. 核心配置项 (settings.conf)
 
 - `INSTANCE_NAME`: 实例名（时间戳后缀，如 `openwebui_8421`），决定容器名与数据目录。
 - `OPENWEBUI_PORT`: 面板对外暴露的宿主机端口。
@@ -25,12 +22,12 @@ Open WebUI 是一款用于大语言模型的现代化可视化交互面板，支
 - `CORS_ALLOW_ORIGIN`: 跨域来源，默认 `*`（生产环境不安全，建议收紧）。
 - `USER_AGENT`: 联网搜索时伪装的浏览器 UA。
 
-## 备注
+## 4. 备注
 
-- 首次登录即管理员：第一个注册的账户自动获得管理员权限；之后注册的用户初始为 `Pending`，需管理员审批。
-- 数据本地化：聊天记录与密码默认仅保存在本地 `./data/`，不外传。
+- 首次登录即管理员：第一个注册的账户自动获得管理员权限；之后注册的用户初始为 Pending，需管理员审批。
+- 数据本地化：聊天记录与密码默认仅保存在本地 `./data/` 目录，不外传。
 
-## 快速执行
+## 5. 快速执行
 
 ```bash
 cd deploy_apps/openwebui
@@ -43,15 +40,9 @@ bash cli.sh init
 bash cli.sh start
 ```
 
-## 命令解释
+## 6. 命令解释
 
-每条命令对应的实际执行内容如下（`INSTANCE_NAME`、`OPENWEBUI_PORT` 等取自 `settings.conf`，启动前已 `set -a; source settings.conf; set +a` 导出为环境变量）。
-
-路径锚定：脚本启动时计算自身所在目录 `SCRIPT_DIR`，模板取自 `$SCRIPT_DIR/templates`、配置为 `$SCRIPT_DIR/settings.conf`、数据落在 `$SCRIPT_DIR/data/<实例名>_data`，配置里不写死绝对路径，从任意 cwd 运行或整体移动目录都不会失效。
-
-单体应用，不被任何上层嵌入：因此不提供基础服务的 `--conf`/`--name` 参数，也不创建 user-defined network 或委托级联。容器里的 `--add-host host.docker.internal:host-gateway` 只为让容器访问宿主机上的 Ollama，与级联组网无关。
-
-### `init`
+#### init
 
 若 `settings.conf` 不存在则用模板渲染生成，再创建数据目录，不启动容器。
 
@@ -64,15 +55,12 @@ sed -e "s/{{INSTANCE_NAME}}/openwebui_<时间戳>/g" \
 mkdir -p "$SCRIPT_DIR/data/${INSTANCE_NAME}_data"
 ```
 
-### `start`
+#### start
 
 启动容器。若同名容器已存在，仅 `docker start`；否则 `docker run` 新建。
 
 ```bash
-# 已存在
-docker start "${INSTANCE_NAME}"
-
-# 不存在（新建）
+# 不存在时新建
 docker run -d \
     --name "${INSTANCE_NAME}" \
     -p "${OPENWEBUI_PORT}:8080" \
@@ -89,17 +77,19 @@ docker run -d \
     ghcr.io/open-webui/open-webui:main
 ```
 
-### `up`
+#### up
 
 先 `init` 再 `start`。
 
-### `stop`
+#### stop
+
+停止容器。
 
 ```bash
 docker stop "${INSTANCE_NAME}"
 ```
 
-### `rm`
+#### rm
 
 删除容器，保留 `./data/` 与 `settings.conf`。
 
@@ -108,7 +98,7 @@ docker stop "${INSTANCE_NAME}"
 docker rm "${INSTANCE_NAME}"
 ```
 
-### `purge`
+#### purge
 
 删除容器并删除本地数据目录，保留 `settings.conf`。
 
@@ -118,17 +108,15 @@ docker rm "${INSTANCE_NAME}"
 rm -rf "$SCRIPT_DIR/data/${INSTANCE_NAME}_data"
 ```
 
-### `status`
+#### status
+
+显示容器状态。
 
 ```bash
 docker ps -a --filter "name=^${INSTANCE_NAME}$"
 ```
 
-### 无参 / 未知参数
-
-打印 Usage 帮助。
-
-## 其他补充
+## 7. 其他补充
 
 - 生产建议：把 `CORS_ALLOW_ORIGIN` 从 `*` 收紧为实际域名；若对外暴露，建议前置反代并启用 HTTPS。
 - 镜像版本：当前固定 `ghcr.io/open-webui/open-webui:main`（滚动标签）。若需可复现部署，可改为具体版本标签。
