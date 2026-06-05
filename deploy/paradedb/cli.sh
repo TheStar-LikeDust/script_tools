@@ -2,7 +2,25 @@
 set -euo pipefail
 
 COMMAND=${1:-help}
-CONF_FILE="settings.conf"
+shift || true
+
+# Optional args for embedding this service under another app's directory
+CONF_FILE=""
+NAME_OVERRIDE=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --conf) CONF_FILE="$2"; shift 2 ;;
+        --name) NAME_OVERRIDE="$2"; shift 2 ;;
+        *) echo "[ERROR] [ParadeDB] Unknown argument: $1"; exit 1 ;;
+    esac
+done
+
+# Anchor paths to this script's own location so it works from any cwd and survives moves
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TPL_DIR="$SCRIPT_DIR/templates"
+CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings.conf}"
+# Config + data live together; data dir is derived from the config file's directory at runtime
+CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 IMAGE="paradedb/paradedb:latest-pg17"
 
 hr() { echo "======================================================================"; }
@@ -26,23 +44,24 @@ do_init() {
     if [ ! -f "$CONF_FILE" ]; then
         local port=$(random_port)
         local pass=$(random_password)
-        local ts=$(date +%s)
-        local suffix=${ts: -4}
-        local default_name="paradedb_${suffix}"
-        [ -n "${APP_PREFIX:-}" ] && default_name="paradedb_${APP_PREFIX}_${suffix}"
+        local name="$NAME_OVERRIDE"
+        if [ -z "$name" ]; then
+            local ts=$(date +%s)
+            name="paradedb_${ts: -4}"
+        fi
 
-        sed -e "s/{{INSTANCE_NAME}}/${default_name}/g" \
+        sed -e "s/{{INSTANCE_NAME}}/${name}/g" \
             -e "s/{{DB_PORT}}/${port}/g" \
             -e "s/{{DB_PASSWORD}}/${pass}/g" \
             -e "s/{{DB_USER}}/postgres/g" \
             -e "s/{{DB_NAME}}/postgres/g" \
-            templates/settings.conf.tpl > "$CONF_FILE"
+            "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
     fi
 
     source "$CONF_FILE"
 
     # Pre-create the bind-mount data dir so Docker won't auto-create it as root
-    mkdir -p "./data/${INSTANCE_NAME}_data"
+    mkdir -p "${CONF_DIR}/data/${INSTANCE_NAME}_data"
 
     hr
     echo "[SUCCESS] [ParadeDB] Initialization completed!"
@@ -58,7 +77,7 @@ do_start() {
     require_conf
     # Source settings, then map DB_* to the container's POSTGRES_* via explicit -e values
     set -a; source "$CONF_FILE"; set +a
-    mkdir -p "./data/${INSTANCE_NAME}_data"
+    mkdir -p "${CONF_DIR}/data/${INSTANCE_NAME}_data"
 
     hr
     echo "[INFO] [ParadeDB] Starting service (Container: ${INSTANCE_NAME})..."
@@ -70,7 +89,7 @@ do_start() {
         docker run -d \
             --name "$INSTANCE_NAME" \
             -p "${DB_PORT}:5432" \
-            -v "$(pwd)/data/${INSTANCE_NAME}_data:/var/lib/postgresql/data" \
+            -v "${CONF_DIR}/data/${INSTANCE_NAME}_data:/var/lib/postgresql/data" \
             -e POSTGRES_USER="$DB_USER" \
             -e POSTGRES_PASSWORD="$DB_PASSWORD" \
             -e POSTGRES_DB="$DB_NAME" \
@@ -117,7 +136,7 @@ do_purge() {
     docker rm "$INSTANCE_NAME" 2>/dev/null || true
 
     # Clean up local data directory but preserve configs
-    local data_dir="./data/${INSTANCE_NAME}_data"
+    local data_dir="${CONF_DIR}/data/${INSTANCE_NAME}_data"
     if [ -d "$data_dir" ]; then
         echo "Removing local data directory..."
         rm -rf "$data_dir" 2>/dev/null || true
@@ -135,7 +154,7 @@ do_status() {
 }
 
 do_help() {
-    echo "Usage: $0 {init|start|up|stop|rm|purge|status}"
+    echo "Usage: $0 {init|start|up|stop|rm|purge|status} [--conf PATH] [--name NAME]"
     echo "  init    : Generate settings.conf and create data dir, without starting"
     echo "  start   : Start the container (run if absent, otherwise just start it)"
     echo "  up      : Initialize config and start the container instantly"
@@ -143,6 +162,11 @@ do_help() {
     echo "  rm      : Remove the container (Preserves ./data and settings.conf)"
     echo "  purge   : DANGER - Remove container AND permanently delete ./data (Preserves settings.conf)"
     echo "  status  : Show container running status"
+    echo ""
+    echo "Options (for embedding as a sub-service under another app):"
+    echo "  --conf PATH : Config file location (default: <script_dir>/settings.conf)."
+    echo "                Data dir is derived as <dir-of-conf>/data/<INSTANCE_NAME>_data."
+    echo "  --name NAME : Full instance name to write at init (default: auto 'paradedb_<ts>')."
 }
 
 case "$COMMAND" in

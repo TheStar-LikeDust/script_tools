@@ -45,19 +45,21 @@ bash cli.sh start
 
 每条命令对应的实际执行内容如下（`INSTANCE_NAME`、`DB_PORT` 等取自 `settings.conf`，启动前已 `set -a; source settings.conf; set +a` 导出为环境变量）。
 
+路径锚定：脚本启动时计算自身所在目录 `SCRIPT_DIR`，模板恒取自 `$SCRIPT_DIR/templates`；配置文件默认 `$SCRIPT_DIR/settings.conf`（可用 `--conf` 覆盖），**数据目录在运行时派生为「配置文件所在目录」下的 `data/<实例名>_data`**。配置里不写死任何绝对路径，因此从任意 cwd 运行、或整体移动目录后再运行都不会失效。
+
 ### `init`
 
-若 `settings.conf` 不存在则用模板渲染生成，再创建数据目录，不启动容器。
+若配置文件不存在则用模板渲染生成，再创建数据目录，不启动容器。`--name` 指定完整实例名（不传则自动生成 `paradedb_<时间戳>`）。
 
 ```bash
-sed -e "s/{{INSTANCE_NAME}}/paradedb_<时间戳>/g" \
+sed -e "s/{{INSTANCE_NAME}}/<--name 或 paradedb_时间戳>/g" \
     -e "s/{{DB_PORT}}/<随机端口>/g" \
     -e "s/{{DB_PASSWORD}}/<随机密码>/g" \
     -e "s/{{DB_USER}}/postgres/g" \
     -e "s/{{DB_NAME}}/postgres/g" \
-    templates/settings.conf.tpl > settings.conf
+    "$SCRIPT_DIR/templates/settings.conf.tpl" > "$CONF_FILE"
 
-mkdir -p ./data/${INSTANCE_NAME}_data
+mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data"
 ```
 
 ### `start`
@@ -72,7 +74,7 @@ docker start "${INSTANCE_NAME}"
 docker run -d \
     --name "${INSTANCE_NAME}" \
     -p "${DB_PORT}:5432" \
-    -v "$(pwd)/data/${INSTANCE_NAME}_data:/var/lib/postgresql/data" \
+    -v "$CONF_DIR/data/${INSTANCE_NAME}_data:/var/lib/postgresql/data" \
     -e POSTGRES_USER="${DB_USER}" \
     -e POSTGRES_PASSWORD="${DB_PASSWORD}" \
     -e POSTGRES_DB="${DB_NAME}" \
@@ -110,7 +112,7 @@ docker rm "${INSTANCE_NAME}"
 ```bash
 docker stop "${INSTANCE_NAME}"
 docker rm "${INSTANCE_NAME}"
-rm -rf ./data/${INSTANCE_NAME}_data
+rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data"
 ```
 
 ### `status`
@@ -122,6 +124,27 @@ docker ps -a --filter "name=^${INSTANCE_NAME}$"
 ### 无参 / 未知参数
 
 打印 Usage 帮助。
+
+## 作为子服务嵌入 (`--conf` / `--name`)
+
+除了独立部署，本服务可被上层 app（如 casdoor）作为「附带数据库」调用，把配置与数据安置到上层目录里，docker run 逻辑零重复。两个可选参数：
+
+- `--conf PATH`：指定配置文件位置（默认 `$SCRIPT_DIR/settings.conf`）。数据目录运行时派生为该文件所在目录下的 `data/<实例名>_data`。支持相对路径（相对当前 cwd 解析）。
+- `--name NAME`：在 `init` 时写入的完整实例名，由调用方决定（不传则自动 `paradedb_<时间戳>`）。
+
+约定：实例命名完全交给调用方，本服务不再使用 `APP_PREFIX` 之类的前缀拼接。上层负责生成形如 `paradedb_casdoor_8421` 的完整名再用 `--name` 传入。
+
+样例（被调用方在 `deploy_apps/casdoor` 目录下托管一个 paradedb）：
+
+```bash
+# init：配置落到 casdoor 目录的 casdoor_paradedb.conf，数据落到 casdoor/data/
+bash ../../deploy/paradedb/cli.sh init \
+    --conf "$PWD/casdoor_paradedb.conf" \
+    --name "paradedb_casdoor_8421"
+
+# start / stop / rm / purge / status：同样带上 --conf 指向同一文件
+bash ../../deploy/paradedb/cli.sh start --conf "$PWD/casdoor_paradedb.conf"
+```
 
 ## 其他补充
 
