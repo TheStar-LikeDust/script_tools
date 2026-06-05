@@ -313,6 +313,11 @@ tools/*/settings.conf
 # Casdoor rendered app config
 deploy_apps/casdoor/config/
 
+# Bundled sub-service rendered configs (e.g. casdoor_paradedb.conf; contain random secrets)
+deploy_apps/*/*_paradedb.conf
+deploy_apps/*/*_redis.conf
+deploy_apps/*/*_rustfs.conf
+
 # Persistent data directories
 deploy/*/data/
 deploy_apps/*/data/
