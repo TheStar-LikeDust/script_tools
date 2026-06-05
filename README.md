@@ -25,8 +25,7 @@
 不同复杂度的服务采用不同的容器编排方式，并以原生 docker run 为首选：
 
 - 单容器服务（如 openwebui）：直接用原生 `docker run` 管理，不依赖 docker compose，只需装了 `docker`。
-- 自带依赖的集合服务（如 casdoor）：用 docker run + 委托式级联组装——上层把底层服务的 `cli.sh` 当函数调用（通过 `--conf`/`--name` 参数嵌入），并在 app 级 user-defined network 内按容器名互通，同样不依赖 compose。详见 `docs/project/service.md` 第 6 节。
-- 多服务应用（如 lobechat，遗留）：仍用 `docker compose` 做编排、网络与启动顺序，项目长期方向是逐步去除 compose 依赖。
+- 自带依赖的集合服务（如 casdoor、lobechat）：用 docker run + 委托式级联组装——上层把底层服务的 `cli.sh` 当函数调用（通过 `--conf`/`--name` 参数嵌入），并在 app 级 user-defined network 内按容器名互通，全程不依赖 compose。lobechat 进一步级联 paradedb/redis/rustfs 与同级的 casdoor。详见 `docs/project/service.md` 第 6 节。
 
 配置注入统一约定：`cli.sh` 先 `source settings.conf`，再用 `docker run -e VAR` 把变量透传给容器，而不是用 `--env-file` 或 `sed` 渲染。原因是 `--env-file` 不剥引号、`sed` 渲染对特殊字符脆弱，而 `source` 能让含空格/斜杠的值（如 `USER_AGENT`）正确解析，且人工手动 run 时行为与脚本一致。
 
@@ -85,8 +84,6 @@ bash cli.sh up
 
 ### 场景二：一键部署全栈业务 (以 LobeChat 为例)
 
-> 注意（待迁移）：本场景的 LobeChat 仍为旧的级联模型（`export APP_PREFIX` + `docker compose`），尚未迁移到新的 `--conf`/`--name` 委托式级联与 app 级 user-defined network。其级联命名/网络方式已与迁移后的基础服务（如 paradedb）不完全一致，下文按现状保留，后续会统一到新模型。新模型的真实范例见 `deploy_apps/casdoor`（casdoor 委托 paradedb）。
-
 当你需要拉起一套包含 ParadeDB + RustFS + Redis + Casdoor + LobeChat 的完整架构时：
 
 ```bash
@@ -126,9 +123,9 @@ bash cli.sh up
 ```
 
 **发生了什么？**
-- **默认/内置模式**：部署控制器会去调用 `deploy/paradedb` 给你单独分配一个专属于 LobeChat 的隔离库。级联部署时实例名规则为 `<服务名>_<上层APP前缀>_<4位时间戳>`（例如 `paradedb_lobechat_8421_9032`），绝对不会和你之前的库混淆。
-- **外部模式**：LobeChat 栈不会启动新的数据库容器，而是直接把外部数据库的账号密码传给 Casdoor 和 LobeChat 主程序进行连接。
-- **全局网络互通**：所有被拉起的底层组件都会自动连入同一个专属网络（如 `lobechat_network`）。
+- **委托式级联**：控制器调用各基础服务自己的 `cli.sh --conf settings_X.conf --name X_<实例名>`，把依赖的配置与数据都安置在 lobechat 目录下；实例名如 `paradedb_lobechat_8421`。casdoor 作为同级 app 被直接调用，并自带一个独立 paradedb（全量捆绑时共两个 paradedb 容器）。
+- **外部模式**：任一依赖置 `USE_INTERNAL_*=false` 时，LobeChat 不启动该容器，而是直接读 `EXTERNAL_*` 连接信息。
+- **app 级组网**：`start` 时建一个 user-defined network `<实例名>_net`，把所有依赖与 LobeChat 容器接入，按名互通；lobechat 自身也是纯 `docker run`，不再依赖 docker compose。
 
 ### 场景三：部署单容器应用 (以 Open WebUI 为例)
 

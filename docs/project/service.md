@@ -9,7 +9,7 @@
 源文件与生成物的区分：
 
 - 源文件（纳入版本管理）：`cli.sh`、`templates/*.tpl`、该服务的说明文档。
-- 生成物（不提交，由 `.gitignore` 忽略）：`settings.conf`、`compose.yml`（若有）、被嵌入子服务的渲染配置（如 `settings_paradedb.conf`）、Casdoor 渲染的 `app.conf`（位于 `data/<INSTANCE_NAME>_config/`）、各服务的 `data/`。
+- 生成物（不提交，由 `.gitignore` 忽略）：`settings.conf`、被嵌入子服务的渲染配置（如 `settings_paradedb.conf`）、Casdoor 渲染的 `app.conf`（位于 `data/<INSTANCE_NAME>_config/`）、各服务的 `data/`。
 
 `settings.conf` 含随机密钥/密码，属于本地资产：既不提交，也不会被 `purge` 删除；迁移时与 `data/` 一起打包。
 
@@ -19,13 +19,12 @@
 - `deploy_apps/`：复合应用（如 LobeChat、Open WebUI），通过向下级联调用组装底层原子服务，配置上提供“内置隔离组装”与“连接外部已有服务”两种分支。
 - `tools/`：宿主机（非 docker 级）的开发环境与工具（如 code-server、tmux）。
 
-## 3. 编排方式：单容器优先用原生 docker run
+## 3. 编排方式：全面使用原生 docker run
 
-容器编排以原生 docker run 为首选，按服务复杂度分三类：
+容器编排全部使用原生 docker run，不依赖 docker compose，按服务复杂度分两类：
 
-- 单容器服务（首选）：直接用原生 `docker run` 管理，不依赖 docker compose，只需装了 `docker`。容器配置（端口、挂载、环境变量、`--network`、`--restart`）直接写在 `cli.sh` 的 `do_start` 里。范例：`deploy_apps/openwebui`。
-- 自带依赖的集合服务（首选）：单主体 + 少量附带依赖时，用 docker run + 委托式级联组装（见第 6 节），不引入 compose。上层在 `do_start` 里创建一个 app 级 user-defined network，把附带容器 `docker network connect` 进来，彼此按容器名互通。范例：`deploy_apps/casdoor`（casdoor + 附带 paradedb）。
-- 多服务应用（遗留，逐步淘汰）：仍用 `docker compose` 做编排、网络与启动顺序（如 `lobechat`：DB + Redis + S3 + Casdoor + 主程序）。
+- 单容器服务：直接用原生 `docker run` 管理，只需装了 `docker`。容器配置（端口、挂载、环境变量、`--network`、`--restart`）直接写在 `cli.sh` 的 `do_start` 里。范例：`deploy_apps/openwebui`。
+- 自带依赖的集合服务：主体 + 一个或多个附带依赖时，用 docker run + 委托式级联组装（见第 6 节）。上层在 `do_start` 里创建一个 app 级 user-defined network，把附带容器 `docker network connect` 进来，彼此按容器名互通。范例：`deploy_apps/casdoor`（casdoor + 附带 paradedb）、`deploy_apps/lobechat`（LobeChat + 级联 paradedb/redis/rustfs 与同级 casdoor）。
 
 reason why 偏向 docker run：
 
@@ -33,7 +32,7 @@ reason why 偏向 docker run：
 - 更透明、可复现：启动命令就摆在 `cli.sh` 里。想手动调试时，照着 `source settings.conf` 后直接 `docker run` 即可，行为与脚本一致。
 - 去除渲染脆弱性：无需 `compose.yml.tpl`，少一层 `sed` 模板渲染。
 
-注意：`compose.yml` / `compose.yml.tpl` 不是“目录即服务”的必备资产，仅遗留多服务模式才需要。项目的长期方向是尽量减少乃至取消对 compose 的依赖。
+注意：项目已全面去除 docker compose，不再使用 `compose.yml` / `compose.yml.tpl`；所有服务（含多依赖的 lobechat）都用 docker run + 委托式级联。
 
 ## 4. 配置注入：source + -e 透传，不用 --env-file
 
@@ -57,7 +56,6 @@ reason why：
 - 容器名：直接等于 `INSTANCE_NAME`。
 - 持久化目录：`<配置文件所在目录>/data/${INSTANCE_NAME}_data`（默认即服务自身目录下的 `./data`）。
 - 渲染配置目录（如 Casdoor 的 app.conf）：`data/${INSTANCE_NAME}_config`，与数据目录平级，避免配置混入运行数据。
-- compose 项目名（仅遗留 compose 模式适用）：`${INSTANCE_NAME}_proj`。
 
 另外，`do_init` / `do_start` 会 `mkdir -p` 预建挂载目录，避免 Docker 以 root 身份自动创建导致权限问题。
 

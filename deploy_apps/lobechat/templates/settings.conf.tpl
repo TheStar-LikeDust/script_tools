@@ -1,6 +1,5 @@
 # LobeChat Stack Settings
 INSTANCE_NAME="{{INSTANCE_NAME}}"
-NETWORK_NAME="{{NETWORK_NAME}}"
 
 # Host Port
 LOBECHAT_PORT="{{LOBECHAT_PORT}}"
@@ -14,6 +13,12 @@ AUTH_SECRET="{{AUTH_SECRET}}"
 # For external access, set this to your public IP or domain, e.g. auth.example.com
 CASDOOR_PUBLIC_HOST="localhost"
 
+# Casdoor SSO client credentials for the LobeChat app (used when USE_INTERNAL_CASDOOR=true).
+# Fill these AFTER creating the LobeChat application in the Casdoor admin UI, then recreate
+# the lobechat container ('bash cli.sh rm && bash cli.sh start') to apply.
+CASDOOR_CLIENT_ID="<UPDATE_ME_AFTER_CASDOOR_START>"
+CASDOOR_CLIENT_SECRET="<UPDATE_ME_AFTER_CASDOOR_START>"
+
 # ==============================================================================
 # Internal Services (Set 'true' to auto-deploy these containers)
 # ==============================================================================
@@ -21,6 +26,10 @@ USE_INTERNAL_DB="true"
 USE_INTERNAL_REDIS="true"
 USE_INTERNAL_S3="true"
 USE_INTERNAL_CASDOOR="true"
+
+# Bucket name used when USE_INTERNAL_S3=true. RustFS does not auto-create buckets,
+# so create this bucket once via the RustFS console before uploading files.
+S3_BUCKET="lobechat"
 
 # ==============================================================================
 # External Services (If above is 'false', fill in external connection info here)
