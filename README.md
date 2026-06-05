@@ -25,7 +25,8 @@
 不同复杂度的服务采用不同的容器编排方式，并以原生 docker run 为首选：
 
 - 单容器服务（如 openwebui）：直接用原生 `docker run` 管理，不依赖 docker compose，只需装了 `docker`。
-- 多服务应用（如 lobechat）：用 `docker compose` 做编排、网络与启动顺序。
+- 自带依赖的集合服务（如 casdoor）：用 docker run + 委托式级联组装——上层把底层服务的 `cli.sh` 当函数调用（通过 `--conf`/`--name` 参数嵌入），并在 app 级 user-defined network 内按容器名互通，同样不依赖 compose。详见 `docs/project/service.md` 第 6 节。
+- 多服务应用（如 lobechat，遗留）：仍用 `docker compose` 做编排、网络与启动顺序，项目长期方向是逐步去除 compose 依赖。
 
 配置注入统一约定：`cli.sh` 先 `source settings.conf`，再用 `docker run -e VAR` 把变量透传给容器，而不是用 `--env-file` 或 `sed` 渲染。原因是 `--env-file` 不剥引号、`sed` 渲染对特殊字符脆弱，而 `source` 能让含空格/斜杠的值（如 `USER_AGENT`）正确解析，且人工手动 run 时行为与脚本一致。
 
@@ -34,7 +35,7 @@
 修改本项目代码或新增服务前，请先阅读 `docs/project/` 下的三份设计文档，了解统一的约定与背后原因（后续维护或 AI 协作时应以这三份为准）：
 
 - `docs/project/command.md`：cli.sh 的命令与代码设计（命令集、`do_` 前缀命名、脚本结构、`hr()` 回显规范、`start` 幂等语义）。
-- `docs/project/service.md`：服务/目录的组织与部署设计（目录即服务、单容器优先用 docker run、`source + -e` 配置注入、实例命名、网络传播）。
+- `docs/project/service.md`：服务/目录的组织与部署设计（目录即服务、单容器优先用 docker run、`source + -e` 配置注入、实例命名、委托式级联与 `--conf`/`--name` 通用参数、app 级网络组装）。
 - `docs/project/document.md`：服务说明文档（`docs/*.md`）的章节结构规范，以 `docs/openwebui.md` 为模板。
 
 ## 快速获取安装
@@ -83,6 +84,8 @@ bash cli.sh up
 如果后续需要防端口冲突或起第二个库，只需修改 `settings.conf` 里的 `INSTANCE_NAME`/端口等参数，再执行 `bash cli.sh rm && bash cli.sh start` 重建生效（数据在 `./data` 卷里，不会丢）。
 
 ### 场景二：一键部署全栈业务 (以 LobeChat 为例)
+
+> 注意（待迁移）：本场景的 LobeChat 仍为旧的级联模型（`export APP_PREFIX` + `docker compose`），尚未迁移到新的 `--conf`/`--name` 委托式级联与 app 级 user-defined network。其级联命名/网络方式已与迁移后的基础服务（如 paradedb）不完全一致，下文按现状保留，后续会统一到新模型。新模型的真实范例见 `deploy_apps/casdoor`（casdoor 委托 paradedb）。
 
 当你需要拉起一套包含 ParadeDB + RustFS + Redis + Casdoor + LobeChat 的完整架构时：
 

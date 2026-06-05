@@ -137,13 +137,13 @@ docker ps -a --filter "name=^${INSTANCE_NAME}$"
 样例（被调用方在 `deploy_apps/casdoor` 目录下托管一个 paradedb）：
 
 ```bash
-# init：配置落到 casdoor 目录的 casdoor_paradedb.conf，数据落到 casdoor/data/
+# init：配置落到 casdoor 目录的 settings_paradedb.conf，数据落到 casdoor/data/
 bash ../../deploy/paradedb/cli.sh init \
-    --conf "$PWD/casdoor_paradedb.conf" \
+    --conf "$PWD/settings_paradedb.conf" \
     --name "paradedb_casdoor_8421"
 
 # start / stop / rm / purge / status：同样带上 --conf 指向同一文件
-bash ../../deploy/paradedb/cli.sh start --conf "$PWD/casdoor_paradedb.conf"
+bash ../../deploy/paradedb/cli.sh start --conf "$PWD/settings_paradedb.conf"
 ```
 
 ## 其他补充

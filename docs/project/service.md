@@ -9,7 +9,7 @@
 源文件与生成物的区分：
 
 - 源文件（纳入版本管理）：`cli.sh`、`templates/*.tpl`、该服务的说明文档。
-- 生成物（不提交，由 `.gitignore` 忽略）：`settings.conf`、`compose.yml`（若有）、Casdoor 的 `config/app.conf`、各服务的 `data/`。
+- 生成物（不提交，由 `.gitignore` 忽略）：`settings.conf`、`compose.yml`（若有）、被嵌入子服务的渲染配置（如 `settings_paradedb.conf`）、Casdoor 渲染的 `app.conf`（位于 `data/<INSTANCE_NAME>_config/`）、各服务的 `data/`。
 
 `settings.conf` 含随机密钥/密码，属于本地资产：既不提交，也不会被 `purge` 删除；迁移时与 `data/` 一起打包。
 
@@ -21,18 +21,19 @@
 
 ## 3. 编排方式：单容器优先用原生 docker run
 
-容器编排按服务复杂度二选一，并以原生 docker run 为首选：
+容器编排以原生 docker run 为首选，按服务复杂度分三类：
 
-- 单容器服务（首选）：直接用原生 `docker run` 管理，不依赖 docker compose，只需装了 `docker`。容器配置（端口、挂载、环境变量、`--add-host`、`--restart`）直接写在 `cli.sh` 的 `do_start` 里。范例：`deploy_apps/openwebui`。
-- 多服务应用：用 `docker compose` 做编排、网络与启动顺序（如 `lobechat`：DB + Redis + S3 + Casdoor + 主程序 + 自定义网络）。
+- 单容器服务（首选）：直接用原生 `docker run` 管理，不依赖 docker compose，只需装了 `docker`。容器配置（端口、挂载、环境变量、`--network`、`--restart`）直接写在 `cli.sh` 的 `do_start` 里。范例：`deploy_apps/openwebui`。
+- 自带依赖的集合服务（首选）：单主体 + 少量附带依赖时，用 docker run + 委托式级联组装（见第 6 节），不引入 compose。上层在 `do_start` 里创建一个 app 级 user-defined network，把附带容器 `docker network connect` 进来，彼此按容器名互通。范例：`deploy_apps/casdoor`（casdoor + 附带 paradedb）。
+- 多服务应用（遗留，逐步淘汰）：仍用 `docker compose` 做编排、网络与启动顺序（如 `lobechat`：DB + Redis + S3 + Casdoor + 主程序）。
 
 reason why 偏向 docker run：
 
 - 依赖更少：只要 docker，不需要 compose 插件。
 - 更透明、可复现：启动命令就摆在 `cli.sh` 里。想手动调试时，照着 `source settings.conf` 后直接 `docker run` 即可，行为与脚本一致。
-- 去除渲染脆弱性：单容器无需 `compose.yml.tpl`，少一层 `sed` 模板渲染。
+- 去除渲染脆弱性：无需 `compose.yml.tpl`，少一层 `sed` 模板渲染。
 
-注意：`compose.yml` / `compose.yml.tpl` 不是“目录即服务”的必备资产，仅多服务模式才需要。项目的长期方向是尽量减少乃至取消对 compose 的依赖。
+注意：`compose.yml` / `compose.yml.tpl` 不是“目录即服务”的必备资产，仅遗留多服务模式才需要。项目的长期方向是尽量减少乃至取消对 compose 的依赖。
 
 ## 4. 配置注入：source + -e 透传，不用 --env-file
 
@@ -49,12 +50,28 @@ reason why：
 实例名由 `cli.sh init` 首次生成 `settings.conf` 时分配，采用时间戳后缀，保证同机多开不冲突：
 
 - 独立部署：`<服务名>_<4位时间戳>`，如 `paradedb_8421`。
-- 被 app 级联部署：上层通过 `export APP_PREFIX="${INSTANCE_NAME}"` 注入前缀，底层命名为 `<服务名>_<APP_PREFIX>_<4位时间戳>`，如 `paradedb_lobechat_8421_9032`。
+- 被 app 委托部署：上层用 `--name` 显式指定底层实例名（见第 6 节），通常取 `<服务名>_<上层实例名>`，如 `paradedb_casdoor_3953`（与上层共享时间戳，单一来源、可读）。
 
 派生命名约定：
 
 - 容器名：直接等于 `INSTANCE_NAME`。
-- 持久化目录：`./data/${INSTANCE_NAME}_data`。
-- compose 项目名（仅 compose 模式适用）：`${INSTANCE_NAME}_proj`。
+- 持久化目录：`<配置文件所在目录>/data/${INSTANCE_NAME}_data`（默认即服务自身目录下的 `./data`）。
+- 渲染配置目录（如 Casdoor 的 app.conf）：`data/${INSTANCE_NAME}_config`，与数据目录平级，避免配置混入运行数据。
+- compose 项目名（仅遗留 compose 模式适用）：`${INSTANCE_NAME}_proj`。
 
-另外，`do_init` / `do_start` 会 `mkdir -p ./data/${INSTANCE_NAME}_data` 预建挂载目录，避免 Docker 以 root 身份自动创建导致权限问题。
+另外，`do_init` / `do_start` 会 `mkdir -p` 预建挂载目录，避免 Docker 以 root 身份自动创建导致权限问题。
+
+## 6. 委托式级联与基础服务通用参数 (--conf / --name)
+
+集合服务（如 `casdoor`）不复制底层服务逻辑，而是把底层 `cli.sh` 当函数调用，这就是“委托式级联”。为支持被嵌入，基础服务的 `cli.sh` 提供两个通用参数：
+
+- `--conf PATH`：指定该实例的 `settings.conf` 位置（默认 `<脚本目录>/settings.conf`）。数据目录由该配置文件所在目录推导为 `<dir-of-conf>/data/<INSTANCE_NAME>_data`。上层借此把底层的配置与数据都收纳进自己的目录。
+- `--name NAME`：`init` 时写入的完整实例名（默认自动 `<服务名>_<4位时间戳>`）。上层借此给底层一个可读、与自身关联的名字。
+
+委托约定（以 casdoor 嵌入 paradedb 为例）：
+
+- 渲染：上层在自身目录下渲染底层配置（如 `settings_paradedb.conf`），随后 `bash ../../deploy/paradedb/cli.sh <cmd> --conf <该配置> --name paradedb_<上层实例名>`。
+- 生命周期：上层的 `init/start/stop/rm/purge/status` 逐条转发给底层，保证级联整体的幂等与一致清理。
+- 网络：上层 `start` 时 `docker network create` 一个 app 级 user-defined network，把底层容器 `docker network connect` 进来，二者按容器名 + 内部端口直连。基础服务自身保持网络无关——它的 `settings.conf` 不固化网络名，由上层负责组网。
+
+reason why 委托而非 compose：底层逻辑只在一处维护（基础服务的 `cli.sh`），上层零重复；同时延续“单容器优先 docker run”，避免为附带一个依赖就引入 compose。

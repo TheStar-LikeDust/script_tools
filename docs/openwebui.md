@@ -47,6 +47,10 @@ bash cli.sh start
 
 每条命令对应的实际执行内容如下（`INSTANCE_NAME`、`OPENWEBUI_PORT` 等取自 `settings.conf`，启动前已 `set -a; source settings.conf; set +a` 导出为环境变量）。
 
+路径锚定：脚本启动时计算自身所在目录 `SCRIPT_DIR`，模板取自 `$SCRIPT_DIR/templates`、配置为 `$SCRIPT_DIR/settings.conf`、数据落在 `$SCRIPT_DIR/data/<实例名>_data`，配置里不写死绝对路径，从任意 cwd 运行或整体移动目录都不会失效。
+
+单体应用，不被任何上层嵌入：因此不提供基础服务的 `--conf`/`--name` 参数，也不创建 user-defined network 或委托级联。容器里的 `--add-host host.docker.internal:host-gateway` 只为让容器访问宿主机上的 Ollama，与级联组网无关。
+
 ### `init`
 
 若 `settings.conf` 不存在则用模板渲染生成，再创建数据目录，不启动容器。
@@ -55,9 +59,9 @@ bash cli.sh start
 sed -e "s/{{INSTANCE_NAME}}/openwebui_<时间戳>/g" \
     -e "s/{{OPENWEBUI_PORT}}/<随机端口>/g" \
     -e "s/{{WEBUI_SECRET_KEY}}/<随机密钥>/g" \
-    templates/settings.conf.tpl > settings.conf
+    "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
 
-mkdir -p ./data/${INSTANCE_NAME}_data
+mkdir -p "$SCRIPT_DIR/data/${INSTANCE_NAME}_data"
 ```
 
 ### `start`
@@ -72,7 +76,7 @@ docker start "${INSTANCE_NAME}"
 docker run -d \
     --name "${INSTANCE_NAME}" \
     -p "${OPENWEBUI_PORT}:8080" \
-    -v "$(pwd)/data/${INSTANCE_NAME}_data:/app/backend/data" \
+    -v "$SCRIPT_DIR/data/${INSTANCE_NAME}_data:/app/backend/data" \
     -e WEBUI_SECRET_KEY \
     -e OLLAMA_BASE_URL \
     -e OPENAI_API_BASE_URL \
@@ -111,7 +115,7 @@ docker rm "${INSTANCE_NAME}"
 ```bash
 docker stop "${INSTANCE_NAME}"
 docker rm "${INSTANCE_NAME}"
-rm -rf ./data/${INSTANCE_NAME}_data
+rm -rf "$SCRIPT_DIR/data/${INSTANCE_NAME}_data"
 ```
 
 ### `status`

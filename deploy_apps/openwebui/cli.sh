@@ -2,7 +2,12 @@
 set -euo pipefail
 
 COMMAND=${1:-help}
-CONF_FILE="settings.conf"
+
+# Single-container app: anchor paths to this script's own location (cwd-independent,
+# move-safe). No user-defined network / sub-service delegation needed here.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TPL_DIR="$SCRIPT_DIR/templates"
+CONF_FILE="$SCRIPT_DIR/settings.conf"
 IMAGE="ghcr.io/open-webui/open-webui:main"
 
 hr() { echo "======================================================================"; }
@@ -27,20 +32,18 @@ do_init() {
         local port=$(random_port)
         local secret=$(random_secret)
         local ts=$(date +%s)
-        local suffix=${ts: -4}
-        local default_name="openwebui_${suffix}"
-        [ -n "${APP_PREFIX:-}" ] && default_name="openwebui_${APP_PREFIX}_${suffix}"
+        local default_name="openwebui_${ts: -4}"
 
         sed -e "s/{{INSTANCE_NAME}}/${default_name}/g" \
             -e "s/{{OPENWEBUI_PORT}}/${port}/g" \
             -e "s/{{WEBUI_SECRET_KEY}}/${secret}/g" \
-            templates/settings.conf.tpl > "$CONF_FILE"
+            "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
     fi
 
     source "$CONF_FILE"
 
     # Pre-create the bind-mount data dir so Docker won't auto-create it as root
-    mkdir -p "./data/${INSTANCE_NAME}_data"
+    mkdir -p "$SCRIPT_DIR/data/${INSTANCE_NAME}_data"
 
     hr
     echo "[SUCCESS] Open WebUI initialization completed!"
@@ -57,7 +60,7 @@ do_start() {
     # Export all settings so 'docker run -e VAR' passes them through cleanly
     # (bash strips quotes / keeps spaces correctly, e.g. USER_AGENT)
     set -a; source "$CONF_FILE"; set +a
-    mkdir -p "./data/${INSTANCE_NAME}_data"
+    mkdir -p "$SCRIPT_DIR/data/${INSTANCE_NAME}_data"
 
     hr
     echo "[INFO] Starting Open WebUI..."
@@ -69,7 +72,7 @@ do_start() {
         docker run -d \
             --name "$INSTANCE_NAME" \
             -p "${OPENWEBUI_PORT}:8080" \
-            -v "$(pwd)/data/${INSTANCE_NAME}_data:/app/backend/data" \
+            -v "$SCRIPT_DIR/data/${INSTANCE_NAME}_data:/app/backend/data" \
             -e WEBUI_SECRET_KEY \
             -e OLLAMA_BASE_URL \
             -e OPENAI_API_BASE_URL \
@@ -117,7 +120,7 @@ do_purge() {
     docker rm "$INSTANCE_NAME" 2>/dev/null || true
 
     # Clean up local data directory but preserve configs
-    local data_dir="./data/${INSTANCE_NAME}_data"
+    local data_dir="$SCRIPT_DIR/data/${INSTANCE_NAME}_data"
     if [ -d "$data_dir" ]; then
         echo "Removing local data directory..."
         rm -rf "$data_dir" 2>/dev/null || true

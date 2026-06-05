@@ -51,3 +51,10 @@ reason why：不能把函数直接命名成命令本身（如 `rm()`）。`rm` �
 - 回显文案统一用原生风格英文。
 - 服务 `start` 成功后，必须在分隔线内清晰打印 IP/端口与随机生成的密码或默认账号。
 - 强介入环节（如首次启动 Casdoor 需人工进后台建应用）不拆成多段碎片脚本，而是维持原子的 `init` -> `start`，并在 `init` 回显里显眼给出 “Manual Action Required” 操作说明。
+
+## 7. 子服务嵌入参数与 init-only 开关
+
+为支持委托式级联（详见 `service.md` 第 6 节），命令集在标准七命令之外约定两类参数：
+
+- 基础服务的嵌入参数 `--conf PATH` / `--name NAME`：可附加在任意命令后，指定被嵌入实例的配置位置与实例名（数据目录由 conf 所在目录推导）。不改变命令语义，只改变命令作用的目标实例。范例：`bash deploy/paradedb/cli.sh start --conf <上层目录>/settings_paradedb.conf`。
+- 集合服务的 init-only 开关（如 Casdoor 的 `--external`）：只在 `init`/`up` 解析并写入 `settings.conf`（如 `WITH_BUNDLED_DB`），其余命令一律从 `settings.conf` 读取，不再接受该 flag。这样“用附带依赖还是连外部”的模式选择只发生一次，后续生命周期行为完全由配置决定。
