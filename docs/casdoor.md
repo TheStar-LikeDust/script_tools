@@ -4,24 +4,11 @@
 
 > Casdoor 是一个支持 OAuth 2.0 / OIDC / SAML / CAS 的 UI 优先型身份与访问管理（IAM）平台，作为多应用架构的统一认证入口，提供开箱即用的集中式登录页、用户管理看板以及单点登录（SSO）与细粒度权限控制。
 
-它使用 `casbin/casdoor` 镜像，单容器即可运行，本身不存储业务数据，强依赖一个 PostgreSQL。
+它本身不存储业务数据，强依赖 PostgreSQL。部署时提供分歧路由：默认 `init` 会通过级联机制拉起并动态组网专属的 ParadeDB 实例；使用 `init --external` 则彻底剥离内部数据库依赖，转为连接外部目标库。
 
-## 2. 功能
-
-- 模式分支：附带数据库 (Bundled) vs 外部数据库 (External)
-  - 需求：部署环境有差异，轻量测试希望开箱即用，生产环境则要求必须使用外部高可用云数据库。
-  - 方案：脚本提供分歧路由。默认的 `init` 会在当前目录级联拉起一个专属的 ParadeDB 实例；而使用 `init --external` 时，部署脚本将彻底剥离数据库依赖，仅启动面板并连接配置中的外部目标库。
-- 全局通用功能支持
-  - 级联委托：自动管理内部 ParadeDB 的沙箱化部署（详情参见 `docs/design/core.md`）。
-  - 动态组网：支持自动在隔离网络中处理自身与内部数据库的通讯互联。
-
-## 3. 核心配置项
-
-附带模式下目录里有两个配置文件（均为生成物，已被 `.gitignore` 忽略）：
+## 2. 核心配置项
 
 ### settings.conf
-
-Casdoor 自身配置，主要编辑此文件：
 
 - `INSTANCE_NAME`: 实例名（时间戳后缀，如 `casdoor_8421`），决定容器名与数据目录。
 - `CASDOOR_PORT`: 对外暴露的 Web UI / API 端口（容器内 `8000`）。
@@ -31,13 +18,13 @@ Casdoor 自身配置，主要编辑此文件：
 
 ### settings_paradedb.conf
 
-包含该 paradedb 实例的 `INSTANCE_NAME`、`DB_PORT`、`DB_USER`、`DB_PASSWORD`、`DB_NAME` 连接凭证。
+- 包含附带的 paradedb 实例的连接凭证。
 
-## 4. 备注
+## 3. 备注
 
 - 内部配置覆写机制：除部署层面的 `settings.conf` 外，每次执行 `start` 还会动态渲染出供 Casdoor 程序本体读取的 INI 配置，落盘在专属目录 `data/<实例名>_config/app.conf` 并挂载入容器。请勿手动修改此 `app.conf`，所有相关配置调整必须在根目录的 `settings.conf` 中进行。
 
-## 5. 快速执行
+## 4. 快速执行
 
 ```bash
 cd deploy_apps/casdoor
@@ -63,7 +50,7 @@ bash cli.sh rm
 bash cli.sh purge
 ```
 
-## 6. 命令解释
+## 5. 命令解释
 
 注：`--external` 是 init-only 开关，只在 `init`/`up` 阶段解析并写入 `settings.conf` 的 `WITH_BUNDLED_DB` 项；其余生命周期命令一律从 `settings.conf` 读取，无需也不接受该 flag。
 
@@ -157,7 +144,7 @@ docker network rm "${INSTANCE_NAME}_net"                                        
 
 打印 Usage 帮助。
 
-## 7. 其他补充
+## 6. 其他补充
 
 - 镜像版本：当前固定 `casbin/casdoor:latest`，需可复现可锁定具体标签。
 - 外部反代：可在 Docker 外层嵌套 Nginx 实现域名与 HTTPS。

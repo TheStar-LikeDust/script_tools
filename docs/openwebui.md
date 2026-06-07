@@ -4,21 +4,11 @@
 
 > Open WebUI 是一款用于大语言模型的现代化可视化交互面板，支持对接多种模型提供商并自带工具链与 RAG 能力，作为独立面板提供对话界面。
 
-它使用内置 SQLite 存储，无需任何外部数据库即可独立运行。
+它使用内置 SQLite 存储，无需任何外部组件。作为纯体应用，启动时不创建自定义网络或嵌入任何子组件，仅在启动参数中加入 `--add-host host.docker.internal:host-gateway` 以安全穿透访问宿主机的 Ollama 接口。
 
-## 2. 功能
-
-- 容器直通网关
-  - 场景：容器通常无法直接访问宿主机的 localhost，导致无法连接本地运行的 Ollama 模型。
-  - 方案：启动命令内置 `--add-host host.docker.internal:host-gateway` 路由映射，容器可借此安全穿透访问宿主机的 Ollama 接口。
-- 全局通用功能支持
-  - 纯体应用：作为最上层应用且无复杂组件依赖，不创建自定义网络或嵌入任何子组件，保持最简化的原生桥接运行（详情参见 `docs/design/core.md`）。
-
-## 3. 核心配置项
+## 2. 核心配置项
 
 ### settings.conf
-
-面板主配置：
 
 - `INSTANCE_NAME`: 实例名（时间戳后缀，如 `openwebui_8421`），决定容器名与数据目录。
 - `OPENWEBUI_PORT`: 面板对外暴露的宿主机端口。
@@ -29,11 +19,11 @@
 - `CORS_ALLOW_ORIGIN`: 跨域来源，默认 `*`（生产环境不安全，建议收紧）。
 - `USER_AGENT`: 联网搜索时伪装的浏览器 UA。
 
-## 4. 备注
+## 3. 备注
 
 - 首次登录即管理员：Open WebUI 内部机制设定第一个注册的账户自动获得管理员权限；后续注册用户初始状态均为 Pending，需管理员手动审批。
 
-## 5. 快速执行
+## 4. 快速执行
 
 ```bash
 cd deploy_apps/openwebui
@@ -55,7 +45,7 @@ bash cli.sh rm
 bash cli.sh purge
 ```
 
-## 6. 命令解释
+## 5. 命令解释
 
 #### init
 
@@ -131,7 +121,7 @@ rm -rf "$SCRIPT_DIR/data/${INSTANCE_NAME}_data"
 docker ps -a --filter "name=^${INSTANCE_NAME}$"
 ```
 
-## 7. 其他补充
+## 6. 其他补充
 
 - 生产建议：把 `CORS_ALLOW_ORIGIN` 从 `*` 收紧为实际域名；若对外暴露，建议前置反代并启用 HTTPS。
 - 镜像版本：当前固定 `ghcr.io/open-webui/open-webui:main`（滚动标签）。若需可复现部署，可改为具体版本标签。
