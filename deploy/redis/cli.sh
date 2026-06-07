@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# -----------------------------------------------------------------------------
+# 1. Initialization & Path Anchoring
+# -----------------------------------------------------------------------------
 COMMAND=${1:-help}
 shift || true
 
@@ -23,8 +26,13 @@ CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings.conf}"
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 IMAGE="redis:7-alpine"
 
-hr() { echo "======================================================================"; }
+# -----------------------------------------------------------------------------
+# 2. Utility Functions
+# -----------------------------------------------------------------------------
+hr() { echo "-----------------------------------------------------------------------------"; }
 random_port() { shuf -i 30000-40000 -n 1; }
+
+container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
 
 require_conf() {
     if [ ! -f "$CONF_FILE" ]; then
@@ -33,24 +41,32 @@ require_conf() {
     fi
 }
 
-container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
+# -----------------------------------------------------------------------------
+# 3. Special / Business Functions
+# -----------------------------------------------------------------------------
+generate_settings() {
+    local port=$(random_port)
+    local name="$NAME_OVERRIDE"
+    if [ -z "$name" ]; then
+        local ts=$(date +%s)
+        name="redis_${ts: -4}"
+    fi
 
+    sed -e "s/{{INSTANCE_NAME}}/${name}/g" \
+        -e "s/{{REDIS_PORT}}/${port}/g" \
+        "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
+}
+
+# -----------------------------------------------------------------------------
+# 4. Lifecycle Functions (do_xxx)
+# -----------------------------------------------------------------------------
 do_init() {
     hr
     echo "[INFO] [Redis] Initializing configuration..."
     hr
 
     if [ ! -f "$CONF_FILE" ]; then
-        local port=$(random_port)
-        local name="$NAME_OVERRIDE"
-        if [ -z "$name" ]; then
-            local ts=$(date +%s)
-            name="redis_${ts: -4}"
-        fi
-
-        sed -e "s/{{INSTANCE_NAME}}/${name}/g" \
-            -e "s/{{REDIS_PORT}}/${port}/g" \
-            "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
+        generate_settings
     fi
 
     source "$CONF_FILE"
@@ -162,6 +178,9 @@ do_help() {
     echo "  --name NAME : Full instance name to write at init (default: auto 'redis_<ts>')."
 }
 
+# -----------------------------------------------------------------------------
+# 5. Command Dispatch
+# -----------------------------------------------------------------------------
 case "$COMMAND" in
     init)   do_init ;;
     start)  do_start ;;

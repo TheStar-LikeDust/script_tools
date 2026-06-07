@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# -----------------------------------------------------------------------------
+# 1. Initialization & Path Anchoring
+# -----------------------------------------------------------------------------
 COMMAND=${1:-help}
+shift || true
 
 # Single-container app: anchor paths to this script's own location (cwd-independent,
 # move-safe). No user-defined network / sub-service delegation needed here.
@@ -10,9 +14,14 @@ TPL_DIR="$SCRIPT_DIR/templates"
 CONF_FILE="$SCRIPT_DIR/settings.conf"
 IMAGE="ghcr.io/open-webui/open-webui:main"
 
-hr() { echo "======================================================================"; }
+# -----------------------------------------------------------------------------
+# 2. Utility Functions
+# -----------------------------------------------------------------------------
+hr() { echo "-----------------------------------------------------------------------------"; }
 random_port() { shuf -i 30000-40000 -n 1; }
 random_secret() { openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 40; }
+
+container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
 
 require_conf() {
     if [ ! -f "$CONF_FILE" ]; then
@@ -21,23 +30,31 @@ require_conf() {
     fi
 }
 
-container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
+# -----------------------------------------------------------------------------
+# 3. Special / Business Functions
+# -----------------------------------------------------------------------------
+generate_settings() {
+    local port=$(random_port)
+    local secret=$(random_secret)
+    local ts=$(date +%s)
+    local default_name="openwebui_${ts: -4}"
 
+    sed -e "s/{{INSTANCE_NAME}}/${default_name}/g" \
+        -e "s/{{OPENWEBUI_PORT}}/${port}/g" \
+        -e "s/{{WEBUI_SECRET_KEY}}/${secret}/g" \
+        "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
+}
+
+# -----------------------------------------------------------------------------
+# 4. Lifecycle Functions (do_xxx)
+# -----------------------------------------------------------------------------
 do_init() {
     hr
     echo "[INFO] [Open WebUI] Initializing configuration..."
     hr
 
     if [ ! -f "$CONF_FILE" ]; then
-        local port=$(random_port)
-        local secret=$(random_secret)
-        local ts=$(date +%s)
-        local default_name="openwebui_${ts: -4}"
-
-        sed -e "s/{{INSTANCE_NAME}}/${default_name}/g" \
-            -e "s/{{OPENWEBUI_PORT}}/${port}/g" \
-            -e "s/{{WEBUI_SECRET_KEY}}/${secret}/g" \
-            "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
+        generate_settings
     fi
 
     source "$CONF_FILE"
@@ -148,6 +165,9 @@ do_help() {
     echo "  status  : Show container running status"
 }
 
+# -----------------------------------------------------------------------------
+# 5. Command Dispatch
+# -----------------------------------------------------------------------------
 case "$COMMAND" in
     init)   do_init ;;
     start)  do_start ;;

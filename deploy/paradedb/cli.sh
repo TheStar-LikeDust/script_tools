@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# -----------------------------------------------------------------------------
+# 1. Initialization & Path Anchoring
+# -----------------------------------------------------------------------------
 COMMAND=${1:-help}
 shift || true
 
@@ -23,9 +26,14 @@ CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings.conf}"
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 IMAGE="paradedb/paradedb:latest-pg17"
 
-hr() { echo "======================================================================"; }
+# -----------------------------------------------------------------------------
+# 2. Utility Functions
+# -----------------------------------------------------------------------------
+hr() { echo "-----------------------------------------------------------------------------"; }
 random_port() { shuf -i 30000-40000 -n 1; }
 random_password() { openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16; }
+
+container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
 
 require_conf() {
     if [ ! -f "$CONF_FILE" ]; then
@@ -34,28 +42,36 @@ require_conf() {
     fi
 }
 
-container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
+# -----------------------------------------------------------------------------
+# 3. Special / Business Functions
+# -----------------------------------------------------------------------------
+generate_settings() {
+    local port=$(random_port)
+    local pass=$(random_password)
+    local name="$NAME_OVERRIDE"
+    if [ -z "$name" ]; then
+        local ts=$(date +%s)
+        name="paradedb_${ts: -4}"
+    fi
 
+    sed -e "s/{{INSTANCE_NAME}}/${name}/g" \
+        -e "s/{{DB_PORT}}/${port}/g" \
+        -e "s/{{DB_PASSWORD}}/${pass}/g" \
+        -e "s/{{DB_USER}}/postgres/g" \
+        -e "s/{{DB_NAME}}/postgres/g" \
+        "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
+}
+
+# -----------------------------------------------------------------------------
+# 4. Lifecycle Functions (do_xxx)
+# -----------------------------------------------------------------------------
 do_init() {
     hr
     echo "[INFO] [ParadeDB] Initializing configuration..."
     hr
 
     if [ ! -f "$CONF_FILE" ]; then
-        local port=$(random_port)
-        local pass=$(random_password)
-        local name="$NAME_OVERRIDE"
-        if [ -z "$name" ]; then
-            local ts=$(date +%s)
-            name="paradedb_${ts: -4}"
-        fi
-
-        sed -e "s/{{INSTANCE_NAME}}/${name}/g" \
-            -e "s/{{DB_PORT}}/${port}/g" \
-            -e "s/{{DB_PASSWORD}}/${pass}/g" \
-            -e "s/{{DB_USER}}/postgres/g" \
-            -e "s/{{DB_NAME}}/postgres/g" \
-            "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
+        generate_settings
     fi
 
     source "$CONF_FILE"
@@ -169,6 +185,9 @@ do_help() {
     echo "  --name NAME : Full instance name to write at init (default: auto 'paradedb_<ts>')."
 }
 
+# -----------------------------------------------------------------------------
+# 5. Command Dispatch
+# -----------------------------------------------------------------------------
 case "$COMMAND" in
     init)   do_init ;;
     start)  do_start ;;

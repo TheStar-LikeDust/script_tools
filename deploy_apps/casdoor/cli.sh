@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# -----------------------------------------------------------------------------
+# 1. Initialization & Path Anchoring
+# -----------------------------------------------------------------------------
 COMMAND=${1:-help}
 shift || true
 
@@ -10,14 +13,13 @@ TPL_DIR="$SCRIPT_DIR/templates"
 CONF_FILE="$SCRIPT_DIR/settings.conf"
 IMAGE="casbin/casdoor:latest"
 
-# Bundled DB is delegated to deploy/paradedb's cli.sh like a function call;
-# its config + data live under THIS directory via --conf.
-PARADEDB_CLI="$SCRIPT_DIR/../../deploy/paradedb/cli.sh"
-PG_CONF="$SCRIPT_DIR/settings_paradedb.conf"
-deploy_paradedb() { local sub="$1"; shift; bash "$PARADEDB_CLI" "$sub" --conf "$PG_CONF" "$@"; }
-
-hr() { echo "======================================================================"; }
+# -----------------------------------------------------------------------------
+# 2. Utility Functions
+# -----------------------------------------------------------------------------
+hr() { echo "-----------------------------------------------------------------------------"; }
 random_port() { shuf -i 30000-40000 -n 1; }
+
+container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
 
 require_conf() {
     if [ ! -f "$CONF_FILE" ]; then
@@ -26,11 +28,18 @@ require_conf() {
     fi
 }
 
-container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
-
 # App-collection services bundle their DB on a user-defined network so containers
 # talk by name (avoids host-gateway / host firewall issues). Base services stay network-agnostic.
 ensure_network() { docker network inspect "$1" >/dev/null 2>&1 || docker network create "$1" >/dev/null; }
+
+# -----------------------------------------------------------------------------
+# 3. Special / Business Functions
+# -----------------------------------------------------------------------------
+# Bundled DB is delegated to deploy/paradedb's cli.sh like a function call;
+# its config + data live under THIS directory via --conf.
+PARADEDB_CLI="$SCRIPT_DIR/../../deploy/paradedb/cli.sh"
+PG_CONF="$SCRIPT_DIR/settings_paradedb.conf"
+deploy_paradedb() { local sub="$1"; shift; bash "$PARADEDB_CLI" "$sub" --conf "$PG_CONF" "$@"; }
 
 # app.conf lives in a dedicated config dir, parallel to the data dir, so config never
 # mixes with runtime data (needs INSTANCE_NAME sourced)
@@ -90,6 +99,9 @@ wait_pg() {
     echo "[WARN] [Casdoor] DB not healthy after ~60s; continuing anyway."
 }
 
+# -----------------------------------------------------------------------------
+# 4. Lifecycle Functions (do_xxx)
+# -----------------------------------------------------------------------------
 do_init() {
     # --external is an init-only flag; it just records WITH_BUNDLED_DB in settings.conf
     local mode_external="false"
@@ -260,6 +272,9 @@ do_help() {
     echo "                configured via EXT_DB_* in settings.conf."
 }
 
+# -----------------------------------------------------------------------------
+# 5. Command Dispatch
+# -----------------------------------------------------------------------------
 case "$COMMAND" in
     init)   do_init "$@" ;;
     start)  do_start ;;

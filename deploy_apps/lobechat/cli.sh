@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# -----------------------------------------------------------------------------
+# 1. Initialization & Path Anchoring
+# -----------------------------------------------------------------------------
 COMMAND=${1:-help}
 shift || true
 
@@ -10,6 +13,32 @@ TPL_DIR="$SCRIPT_DIR/templates"
 CONF_FILE="$SCRIPT_DIR/settings.conf"
 IMAGE="lobehub/lobehub:latest"
 
+# -----------------------------------------------------------------------------
+# 2. Utility Functions
+# -----------------------------------------------------------------------------
+hr() { echo "-----------------------------------------------------------------------------"; }
+random_port() { shuf -i 30000-40000 -n 1; }
+random_secret() { openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 20; }
+
+container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
+
+require_conf() {
+    if [ ! -f "$CONF_FILE" ]; then
+        echo "[ERROR] [LobeChat] $CONF_FILE not found. Run 'bash cli.sh init' first."
+        exit 1
+    fi
+}
+
+# Same user-defined network so the lobechat container and all bundled base services
+# talk by container name (avoids host-gateway / host firewall issues).
+ensure_network() { docker network inspect "$1" >/dev/null 2>&1 || docker network create "$1" >/dev/null; }
+
+# Read one value from a delegated service's config without clobbering our own vars
+conf_val() { ( . "$1" >/dev/null 2>&1; printf '%s' "${!2:-}" ); }
+
+# -----------------------------------------------------------------------------
+# 3. Special / Business Functions
+# -----------------------------------------------------------------------------
 # Bundled base services are delegated to their own cli.sh; their config + data
 # live under THIS app's directory via --conf. Casdoor is a sibling app that
 # self-bundles its own DB and keeps config in its own directory.
@@ -28,28 +57,10 @@ deploy_redis()    { local sub="$1"; shift; bash "$REDIS_CLI" "$sub" --conf "$RED
 deploy_rustfs()   { local sub="$1"; shift; bash "$RUSTFS_CLI" "$sub" --conf "$RUSTFS_CONF" "$@"; }
 deploy_casdoor()  { local sub="$1"; shift; bash "$CASDOOR_CLI" "$sub" "$@"; }
 
-random_port() { shuf -i 30000-40000 -n 1; }
-random_secret() { openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 20; }
-
-hr() { echo "======================================================================"; }
-
-require_conf() {
-    if [ ! -f "$CONF_FILE" ]; then
-        echo "[ERROR] [LobeChat] $CONF_FILE not found. Run 'bash cli.sh init' first."
-        exit 1
-    fi
-}
-
-container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
-
-# Same user-defined network so the lobechat container and all bundled base services
-# talk by container name (avoids host-gateway / host firewall issues).
-ensure_network() { docker network inspect "$1" >/dev/null 2>&1 || docker network create "$1" >/dev/null; }
-
-# Read one value from a delegated service's config without clobbering our own vars
-conf_val() { ( . "$1" >/dev/null 2>&1; printf '%s' "${!2:-}" ); }
-
-init_config() {
+# -----------------------------------------------------------------------------
+# 4. Lifecycle Functions (do_xxx)
+# -----------------------------------------------------------------------------
+do_init() {
     hr
     echo "[INFO] [LobeChat Stack] Initializing full-stack configuration..."
     hr
@@ -90,7 +101,7 @@ init_config() {
     hr
 }
 
-start_stack() {
+do_start() {
     require_conf
     source "$CONF_FILE"
 
@@ -186,7 +197,7 @@ start_stack() {
     hr
 }
 
-stop_stack() {
+do_stop() {
     require_conf
     source "$CONF_FILE"
     hr
@@ -199,7 +210,7 @@ stop_stack() {
     [ "$USE_INTERNAL_DB" = "true" ] && deploy_paradedb stop || true
 }
 
-rm_stack() {
+do_rm() {
     require_conf
     source "$CONF_FILE"
     hr
@@ -214,7 +225,7 @@ rm_stack() {
     docker network rm "${INSTANCE_NAME}_net" 2>/dev/null || true
 }
 
-purge_stack() {
+do_purge() {
     require_conf
     source "$CONF_FILE"
     hr
@@ -237,7 +248,7 @@ purge_stack() {
     hr
 }
 
-status_stack() {
+do_status() {
     require_conf
     source "$CONF_FILE"
     docker ps -a --filter "name=^${INSTANCE_NAME}$"
@@ -247,7 +258,7 @@ status_stack() {
     [ "$USE_INTERNAL_CASDOOR" = "true" ] && deploy_casdoor status || true
 }
 
-print_usage() {
+do_help() {
     echo "Usage: $0 {init|start|up|stop|rm|purge|status}"
     echo "  init    : Generate settings.conf and initialize bundled dependencies, without starting"
     echo "  start   : Start dependencies then the LobeChat container (pure docker run, no compose)"
@@ -262,13 +273,16 @@ print_usage() {
     echo "casdoor is a sibling app that self-bundles its own DB and keeps config in its own dir."
 }
 
+# -----------------------------------------------------------------------------
+# 5. Command Dispatch
+# -----------------------------------------------------------------------------
 case "$COMMAND" in
-    init)  init_config ;;
-    start) start_stack ;;
-    up)    init_config && start_stack ;;
-    stop)  stop_stack ;;
-    rm)    rm_stack ;;
-    purge) purge_stack ;;
-    status) status_stack ;;
-    *) print_usage ;;
+    init)   do_init ;;
+    start)  do_start ;;
+    up)     do_init && do_start ;;
+    stop)   do_stop ;;
+    rm)     do_rm ;;
+    purge)  do_purge ;;
+    status) do_status ;;
+    *)      do_help ;;
 esac

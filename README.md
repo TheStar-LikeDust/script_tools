@@ -26,17 +26,17 @@
 不同复杂度的服务采用不同的容器编排方式，并以原生 docker run 为首选：
 
 - 单容器服务（如 openwebui）：直接用原生 `docker run` 管理，不依赖 docker compose，只需装了 `docker`。
-- 自带依赖的集合服务（如 casdoor、lobechat）：用 docker run + 委托式级联组装——上层把底层服务的 `cli.sh` 当函数调用（通过 `--conf`/`--name` 参数嵌入），并在 app 级 user-defined network 内按容器名互通，全程不依赖 compose。lobechat 进一步级联 paradedb/redis/rustfs 与同级的 casdoor。详见 `docs/project/service.md` 第 6 节。
+- 自带依赖的集合服务（如 casdoor、lobechat）：用 docker run + 委托式级联组装——上层把底层服务的 `cli.sh` 当函数调用（通过 `--conf`/`--name` 参数嵌入），并在 app 级 user-defined network 内按容器名互通，全程不依赖 compose。lobechat 进一步级联 paradedb/redis/rustfs 与同级的 casdoor。详见 `docs/design/core.md` 第 6 节。
 
 配置注入统一约定：`cli.sh` 先 `source settings.conf`，再用 `docker run -e VAR` 把变量透传给容器，而不是用 `--env-file` 或 `sed` 渲染。原因是 `--env-file` 不剥引号、`sed` 渲染对特殊字符脆弱，而 `source` 能让含空格/斜杠的值（如 `USER_AGENT`）正确解析，且人工手动 run 时行为与脚本一致。
 
 ## 设计文档
 
-修改本项目代码或新增服务前，请先阅读 `docs/project/` 下的三份设计文档，了解统一的约定与背后原因（后续维护或 AI 协作时应以这三份为准）：
+修改本项目代码或新增服务前，请先阅读 `docs/design/` 下的三份设计文档，了解统一的约定与背后原因（后续维护或 AI 协作时应以这三份为准）：
 
-- `docs/project/command.md`：cli.sh 的命令与代码设计（命令集、`do_` 前缀命名、脚本结构、`hr()` 回显规范、`start` 幂等语义）。
-- `docs/project/service.md`：服务/目录的组织与部署设计（目录即服务、单容器优先用 docker run、`source + -e` 配置注入、实例命名、委托式级联与 `--conf`/`--name` 通用参数、app 级网络组装）。
-- `docs/project/document.md`：服务说明文档（`docs/*.md`）的章节结构规范，以 `docs/openwebui.md` 为模板。
+- `docs/design/command.md`：cli.sh 的命令与代码设计（命令集、`do_` 前缀命名、脚本结构、`hr()` 回显规范、`start` 幂等语义）。
+- `docs/design/core.md`：服务/目录的组织与部署设计（目录即服务、单容器优先用 docker run、`source + -e` 配置注入、实例命名、委托式级联与 `--conf`/`--name` 通用参数、app 级网络组装）。
+- `docs/design/document.md`：服务说明文档（`docs/*.md`）的章节结构规范，以 `docs/openwebui.md` 为模板。
 
 ## 快速获取安装
 
