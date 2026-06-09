@@ -33,7 +33,7 @@ hook() { if declare -F "$1" >/dev/null; then "$1"; fi; }
 # -----------------------------------------------------------------------------
 hr() { echo "-----------------------------------------------------------------------------"; }
 random_port() { shuf -i 30000-40000 -n 1; }
-random_secret() { openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 20; }
+random_secret() { openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32; }
 
 container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
 
@@ -156,7 +156,7 @@ do_start() {
             -e "LLM_VISION_IMAGE_USE_BASE64=1" \
             -e "REDIS_URL=${redis_url}" \
             -e "REDIS_PREFIX=${INSTANCE_NAME}" \
-            -e "NEXT_AUTH_SSO_PROVIDERS=casdoor" \
+            -e "AUTH_SSO_PROVIDERS=casdoor" \
             -e "AUTH_CASDOOR_ISSUER=${casdoor_issuer}" \
             -e "AUTH_CASDOOR_ID=${casdoor_id}" \
             -e "AUTH_CASDOOR_SECRET=${casdoor_secret}" \

@@ -37,7 +37,7 @@ hook() { if declare -F "$1" >/dev/null; then "$1"; fi; }
 # -----------------------------------------------------------------------------
 hr() { echo "-----------------------------------------------------------------------------"; }
 random_port() { shuf -i 30000-40000 -n 1; }
-random_password() { openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16; }
+random_password() { openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32; }
 
 container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
 

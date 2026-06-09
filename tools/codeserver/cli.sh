@@ -42,7 +42,7 @@ require_conf() {
 # 3. Service Config Rendering
 # -----------------------------------------------------------------------------
 generate_settings() {
-    local pass=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
+    local pass=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32)
     local name="$NAME_OVERRIDE"
     if [ -z "$name" ]; then
         local ts=$(date +%s)
