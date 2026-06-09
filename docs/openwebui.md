@@ -57,7 +57,7 @@ sed -e "s/{{INSTANCE_NAME}}/openwebui_<时间戳>/g" \
     -e "s/{{WEBUI_SECRET_KEY}}/<随机密钥>/g" \
     "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
 
-mkdir -p "$SCRIPT_DIR/data/${INSTANCE_NAME}_data"
+mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data"
 ```
 
 #### start
@@ -69,7 +69,7 @@ mkdir -p "$SCRIPT_DIR/data/${INSTANCE_NAME}_data"
 docker run -d \
     --name "${INSTANCE_NAME}" \
     -p "${OPENWEBUI_PORT}:8080" \
-    -v "$SCRIPT_DIR/data/${INSTANCE_NAME}_data:/app/backend/data" \
+    -v "$CONF_DIR/data/${INSTANCE_NAME}_data:/app/backend/data" \
     -e WEBUI_SECRET_KEY \
     -e OLLAMA_BASE_URL \
     -e OPENAI_API_BASE_URL \
@@ -110,15 +110,7 @@ docker rm "${INSTANCE_NAME}"
 ```bash
 docker stop "${INSTANCE_NAME}"
 docker rm "${INSTANCE_NAME}"
-rm -rf "$SCRIPT_DIR/data/${INSTANCE_NAME}_data"
-```
-
-#### status
-
-显示容器状态。
-
-```bash
-docker ps -a --filter "name=^${INSTANCE_NAME}$"
+rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data"
 ```
 
 ## 6. 其他补充

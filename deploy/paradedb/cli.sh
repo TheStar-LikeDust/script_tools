@@ -7,14 +7,15 @@ set -euo pipefail
 COMMAND=${1:-help}
 shift || true
 
-# Optional args for embedding this service under another app's directory
+# Cascade args (--conf/--name) plus any command-specific extras
 CONF_FILE=""
 NAME_OVERRIDE=""
+EXTRA_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --conf) CONF_FILE="$2"; shift 2 ;;
         --name) NAME_OVERRIDE="$2"; shift 2 ;;
-        *) echo "[ERROR] [ParadeDB] Unknown argument: $1"; exit 1 ;;
+        *) EXTRA_ARGS+=("$1"); shift ;;
     esac
 done
 
@@ -25,6 +26,11 @@ CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings.conf}"
 # Config + data live together; data dir is derived from the config file's directory at runtime
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 IMAGE="paradedb/paradedb:latest-pg17"
+HOOK_RUN_ARGS=()   # filled by hooks.sh on_start if present; injected into docker run
+
+# Optional service-specific operations (none for this base service: no hooks.sh)
+[ -f "$SCRIPT_DIR/hooks.sh" ] && source "$SCRIPT_DIR/hooks.sh"
+hook() { if declare -F "$1" >/dev/null; then "$1"; fi; }
 
 # -----------------------------------------------------------------------------
 # 2. Utility Functions
@@ -43,7 +49,7 @@ require_conf() {
 }
 
 # -----------------------------------------------------------------------------
-# 3. Special / Business Functions
+# 3. Service Config Rendering
 # -----------------------------------------------------------------------------
 generate_settings() {
     local port=$(random_port)
@@ -70,11 +76,10 @@ do_init() {
     echo "[INFO] [ParadeDB] Initializing configuration..."
     hr
 
-    if [ ! -f "$CONF_FILE" ]; then
-        generate_settings
-    fi
-
+    [ ! -f "$CONF_FILE" ] && generate_settings
     source "$CONF_FILE"
+
+    hook on_init
 
     # Pre-create the bind-mount data dir so Docker won't auto-create it as root
     mkdir -p "${CONF_DIR}/data/${INSTANCE_NAME}_data"
@@ -93,6 +98,9 @@ do_start() {
     require_conf
     # Source settings, then map DB_* to the container's POSTGRES_* via explicit -e values
     set -a; source "$CONF_FILE"; set +a
+
+    hook on_start
+
     mkdir -p "${CONF_DIR}/data/${INSTANCE_NAME}_data"
 
     hr
@@ -104,6 +112,7 @@ do_start() {
     else
         docker run -d \
             --name "$INSTANCE_NAME" \
+            "${HOOK_RUN_ARGS[@]}" \
             -p "${DB_PORT}:5432" \
             -v "${CONF_DIR}/data/${INSTANCE_NAME}_data:/var/lib/postgresql/data" \
             -e POSTGRES_USER="$DB_USER" \
@@ -130,6 +139,7 @@ do_stop() {
     echo "[INFO] [ParadeDB] Stopping service..."
     hr
     docker stop "$INSTANCE_NAME" 2>/dev/null || true
+    hook on_stop
 }
 
 do_rm() {
@@ -140,6 +150,7 @@ do_rm() {
     hr
     docker stop "$INSTANCE_NAME" 2>/dev/null || true
     docker rm "$INSTANCE_NAME" 2>/dev/null || true
+    hook on_rm
 }
 
 do_purge() {
@@ -158,26 +169,21 @@ do_purge() {
         rm -rf "$data_dir" 2>/dev/null || true
     fi
 
+    hook on_purge
+
     hr
     echo "[SUCCESS] [ParadeDB] Data has been purged (configs preserved)."
     hr
 }
 
-do_status() {
-    require_conf
-    source "$CONF_FILE"
-    docker ps -a --filter "name=^${INSTANCE_NAME}$"
-}
-
 do_help() {
-    echo "Usage: $0 {init|start|up|stop|rm|purge|status} [--conf PATH] [--name NAME]"
+    echo "Usage: $0 {init|start|up|stop|rm|purge} [--conf PATH] [--name NAME]"
     echo "  init    : Generate settings.conf and create data dir, without starting"
     echo "  start   : Start the container (run if absent, otherwise just start it)"
     echo "  up      : Initialize config and start the container instantly"
     echo "  stop    : Stop the running container"
     echo "  rm      : Remove the container (Preserves ./data and settings.conf)"
     echo "  purge   : DANGER - Remove container AND permanently delete ./data (Preserves settings.conf)"
-    echo "  status  : Show container running status"
     echo ""
     echo "Options (for embedding as a sub-service under another app):"
     echo "  --conf PATH : Config file location (default: <script_dir>/settings.conf)."
@@ -189,12 +195,12 @@ do_help() {
 # 5. Command Dispatch
 # -----------------------------------------------------------------------------
 case "$COMMAND" in
-    init)   do_init ;;
-    start)  do_start ;;
-    up)     do_init && do_start ;;
-    stop)   do_stop ;;
-    rm)     do_rm ;;
-    purge)  do_purge ;;
-    status) do_status ;;
-    *)      do_help ;;
+    init)    do_init ;;
+    start)   do_start ;;
+    up)      do_init && do_start ;;
+    stop)    do_stop ;;
+    rm)      do_rm ;;
+    purge)   do_purge ;;
+    network) if declare -F on_network >/dev/null; then require_conf; source "$CONF_FILE"; on_network "${EXTRA_ARGS[@]}"; else do_help; fi ;;
+    *)       do_help ;;
 esac

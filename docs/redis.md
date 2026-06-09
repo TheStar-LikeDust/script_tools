@@ -102,14 +102,6 @@ docker rm "${INSTANCE_NAME}"
 rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data"
 ```
 
-#### status
-
-显示容器状态。
-
-```bash
-docker ps -a --filter "name=^${INSTANCE_NAME}$"
-```
-
 ## 6. 其他补充
 
 - 镜像版本：当前固定 `redis:7-alpine`。若需可复现部署，可锁定到更具体的补丁版本标签。

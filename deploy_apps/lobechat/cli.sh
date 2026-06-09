@@ -7,11 +7,26 @@ set -euo pipefail
 COMMAND=${1:-help}
 shift || true
 
-# Anchor paths to this script's own location (cwd-independent, move-safe)
+CONF_FILE=""
+NAME_OVERRIDE=""
+EXTRA_ARGS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --conf) CONF_FILE="$2"; shift 2 ;;
+        --name) NAME_OVERRIDE="$2"; shift 2 ;;
+        *) EXTRA_ARGS+=("$1"); shift ;;
+    esac
+done
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TPL_DIR="$SCRIPT_DIR/templates"
-CONF_FILE="$SCRIPT_DIR/settings.conf"
+CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings.conf}"
+CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 IMAGE="lobehub/lobehub:latest"
+HOOK_RUN_ARGS=()
+
+[ -f "$SCRIPT_DIR/hooks.sh" ] && source "$SCRIPT_DIR/hooks.sh"
+hook() { if declare -F "$1" >/dev/null; then "$1"; fi; }
 
 # -----------------------------------------------------------------------------
 # 2. Utility Functions
@@ -29,33 +44,28 @@ require_conf() {
     fi
 }
 
-# Same user-defined network so the lobechat container and all bundled base services
-# talk by container name (avoids host-gateway / host firewall issues).
-ensure_network() { docker network inspect "$1" >/dev/null 2>&1 || docker network create "$1" >/dev/null; }
-
 # Read one value from a delegated service's config without clobbering our own vars
 conf_val() { ( . "$1" >/dev/null 2>&1; printf '%s' "${!2:-}" ); }
 
 # -----------------------------------------------------------------------------
 # 3. Special / Business Functions
 # -----------------------------------------------------------------------------
-# Bundled base services are delegated to their own cli.sh; their config + data
-# live under THIS app's directory via --conf. Casdoor is a sibling app that
-# self-bundles its own DB and keeps config in its own directory.
-PARADEDB_CLI="$SCRIPT_DIR/../../deploy/paradedb/cli.sh"
-REDIS_CLI="$SCRIPT_DIR/../../deploy/redis/cli.sh"
-RUSTFS_CLI="$SCRIPT_DIR/../../deploy/rustfs/cli.sh"
-CASDOOR_CLI="$SCRIPT_DIR/../casdoor/cli.sh"
+generate_settings() {
+    local port=$(random_port)
+    local vault_sec=$(random_secret)
+    local auth_sec=$(random_secret)
+    local name="$NAME_OVERRIDE"
+    if [ -z "$name" ]; then
+        local ts=$(date +%s)
+        name="lobechat_${ts: -4}"
+    fi
 
-PG_CONF="$SCRIPT_DIR/settings_paradedb.conf"
-REDIS_CONF="$SCRIPT_DIR/settings_redis.conf"
-RUSTFS_CONF="$SCRIPT_DIR/settings_rustfs.conf"
-CASDOOR_CONF="$SCRIPT_DIR/../casdoor/settings.conf"
-
-deploy_paradedb() { local sub="$1"; shift; bash "$PARADEDB_CLI" "$sub" --conf "$PG_CONF" "$@"; }
-deploy_redis()    { local sub="$1"; shift; bash "$REDIS_CLI" "$sub" --conf "$REDIS_CONF" "$@"; }
-deploy_rustfs()   { local sub="$1"; shift; bash "$RUSTFS_CLI" "$sub" --conf "$RUSTFS_CONF" "$@"; }
-deploy_casdoor()  { local sub="$1"; shift; bash "$CASDOOR_CLI" "$sub" "$@"; }
+    sed -e "s/{{INSTANCE_NAME}}/${name}/g" \
+        -e "s/{{LOBECHAT_PORT}}/${port}/g" \
+        -e "s/{{KEY_VAULTS_SECRET}}/${vault_sec}/g" \
+        -e "s/{{AUTH_SECRET}}/${auth_sec}/g" \
+        "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
+}
 
 # -----------------------------------------------------------------------------
 # 4. Lifecycle Functions (do_xxx)
@@ -66,26 +76,10 @@ do_init() {
     hr
 
     if [ ! -f "$CONF_FILE" ]; then
-        local port=$(random_port)
-        local vault_sec=$(random_secret)
-        local auth_sec=$(random_secret)
-        local ts=$(date +%s)
-        local default_name="lobechat_${ts: -4}"
-
-        sed -e "s/{{INSTANCE_NAME}}/${default_name}/g" \
-            -e "s/{{LOBECHAT_PORT}}/${port}/g" \
-            -e "s/{{KEY_VAULTS_SECRET}}/${vault_sec}/g" \
-            -e "s/{{AUTH_SECRET}}/${auth_sec}/g" \
-            "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
+        generate_settings
     fi
     source "$CONF_FILE"
-
-    # Initialize bundled base services so their configs (settings_*.conf) exist here.
-    # Connection values are resolved at start time from these configs (no compose, pure docker).
-    if [ "$USE_INTERNAL_DB" = "true" ]; then deploy_paradedb init --name "paradedb_${INSTANCE_NAME}" >/dev/null; fi
-    if [ "$USE_INTERNAL_REDIS" = "true" ]; then deploy_redis init --name "redis_${INSTANCE_NAME}" >/dev/null; fi
-    if [ "$USE_INTERNAL_S3" = "true" ]; then deploy_rustfs init --name "rustfs_${INSTANCE_NAME}" >/dev/null; fi
-    if [ "$USE_INTERNAL_CASDOOR" = "true" ]; then deploy_casdoor init >/dev/null; fi
+    hook on_init
 
     hr
     echo "[SUCCESS] LobeChat Stack initialization completed!"
@@ -103,30 +97,9 @@ do_init() {
 
 do_start() {
     require_conf
-    source "$CONF_FILE"
+    set -a; source "$CONF_FILE"; set +a
 
-    local net="${INSTANCE_NAME}_net"
-    ensure_network "$net"
-
-    hr
-    echo "[INFO] Starting bundled base services and attaching to ${net}..."
-    hr
-    if [ "$USE_INTERNAL_DB" = "true" ]; then
-        deploy_paradedb start
-        docker network connect "$net" "paradedb_${INSTANCE_NAME}" 2>/dev/null || true
-    fi
-    if [ "$USE_INTERNAL_REDIS" = "true" ]; then
-        deploy_redis start
-        docker network connect "$net" "redis_${INSTANCE_NAME}" 2>/dev/null || true
-    fi
-    if [ "$USE_INTERNAL_S3" = "true" ]; then
-        deploy_rustfs start
-        docker network connect "$net" "rustfs_${INSTANCE_NAME}" 2>/dev/null || true
-    fi
-    if [ "$USE_INTERNAL_CASDOOR" = "true" ]; then
-        deploy_casdoor start
-        docker network connect "$net" "$(conf_val "$CASDOOR_CONF" INSTANCE_NAME)" 2>/dev/null || true
-    fi
+    hook on_start
 
     # Resolve connection settings: internal => reach bundled containers by name on $net
     local db_url redis_url s3_endpoint s3_bucket s3_ak s3_sk casdoor_issuer casdoor_id casdoor_secret
@@ -159,7 +132,7 @@ do_start() {
         casdoor_secret="$EXTERNAL_CASDOOR_SECRET"
     fi
 
-    mkdir -p "$SCRIPT_DIR/data/${INSTANCE_NAME}_data"
+    mkdir -p "${CONF_DIR}/data/${INSTANCE_NAME}_data"
 
     hr
     echo "[INFO] Starting LobeChat core application (Container: ${INSTANCE_NAME})..."
@@ -170,9 +143,9 @@ do_start() {
     else
         docker run -d \
             --name "$INSTANCE_NAME" \
-            --network "$net" \
+            "${HOOK_RUN_ARGS[@]}" \
             -p "${LOBECHAT_PORT}:3210" \
-            -v "$SCRIPT_DIR/data/${INSTANCE_NAME}_data:/app/data" \
+            -v "${CONF_DIR}/data/${INSTANCE_NAME}_data:/app/data" \
             -e "DATABASE_URL=${db_url}" \
             -e "INTERNAL_APP_URL=http://localhost:3210" \
             -e "KEY_VAULTS_SECRET=${KEY_VAULTS_SECRET}" \
@@ -204,10 +177,7 @@ do_stop() {
     echo "[INFO] Stopping LobeChat Stack..."
     hr
     docker stop "$INSTANCE_NAME" 2>/dev/null || true
-    [ "$USE_INTERNAL_CASDOOR" = "true" ] && deploy_casdoor stop || true
-    [ "$USE_INTERNAL_S3" = "true" ] && deploy_rustfs stop || true
-    [ "$USE_INTERNAL_REDIS" = "true" ] && deploy_redis stop || true
-    [ "$USE_INTERNAL_DB" = "true" ] && deploy_paradedb stop || true
+    hook on_stop
 }
 
 do_rm() {
@@ -218,11 +188,7 @@ do_rm() {
     hr
     docker stop "$INSTANCE_NAME" 2>/dev/null || true
     docker rm "$INSTANCE_NAME" 2>/dev/null || true
-    [ "$USE_INTERNAL_CASDOOR" = "true" ] && deploy_casdoor rm || true
-    [ "$USE_INTERNAL_S3" = "true" ] && deploy_rustfs rm || true
-    [ "$USE_INTERNAL_REDIS" = "true" ] && deploy_redis rm || true
-    [ "$USE_INTERNAL_DB" = "true" ] && deploy_paradedb rm || true
-    docker network rm "${INSTANCE_NAME}_net" 2>/dev/null || true
+    hook on_rm
 }
 
 do_purge() {
@@ -233,40 +199,25 @@ do_purge() {
     hr
     docker stop "$INSTANCE_NAME" 2>/dev/null || true
     docker rm "$INSTANCE_NAME" 2>/dev/null || true
-    local data_dir="$SCRIPT_DIR/data/${INSTANCE_NAME}_data"
+    local data_dir="${CONF_DIR}/data/${INSTANCE_NAME}_data"
     if [ -d "$data_dir" ]; then
         echo "Removing local data directory..."
         rm -rf "$data_dir" 2>/dev/null || true
     fi
-    [ "$USE_INTERNAL_CASDOOR" = "true" ] && deploy_casdoor purge || true
-    [ "$USE_INTERNAL_S3" = "true" ] && deploy_rustfs purge || true
-    [ "$USE_INTERNAL_REDIS" = "true" ] && deploy_redis purge || true
-    [ "$USE_INTERNAL_DB" = "true" ] && deploy_paradedb purge || true
-    docker network rm "${INSTANCE_NAME}_net" 2>/dev/null || true
+    hook on_purge
     hr
     echo "[SUCCESS] LobeChat Stack data has been purged (configs preserved)."
     hr
 }
 
-do_status() {
-    require_conf
-    source "$CONF_FILE"
-    docker ps -a --filter "name=^${INSTANCE_NAME}$"
-    [ "$USE_INTERNAL_DB" = "true" ] && deploy_paradedb status || true
-    [ "$USE_INTERNAL_REDIS" = "true" ] && deploy_redis status || true
-    [ "$USE_INTERNAL_S3" = "true" ] && deploy_rustfs status || true
-    [ "$USE_INTERNAL_CASDOOR" = "true" ] && deploy_casdoor status || true
-}
-
 do_help() {
-    echo "Usage: $0 {init|start|up|stop|rm|purge|status}"
+    echo "Usage: $0 {init|start|up|stop|rm|purge} [--conf PATH] [--name NAME]"
     echo "  init    : Generate settings.conf and initialize bundled dependencies, without starting"
     echo "  start   : Start dependencies then the LobeChat container (pure docker run, no compose)"
     echo "  up      : Initialize configs and start containers instantly"
     echo "  stop    : Stop running containers"
     echo "  rm      : Remove containers (Preserves ./data and configs)"
     echo "  purge   : DANGER - Remove containers AND permanently delete ./data (Preserves configs)"
-    echo "  status  : Show container running status"
     echo ""
     echo "Internal vs external dependencies are toggled by USE_INTERNAL_* in settings.conf."
     echo "Bundled paradedb/redis/rustfs are delegated via --conf (settings_*.conf live here);"
@@ -277,12 +228,12 @@ do_help() {
 # 5. Command Dispatch
 # -----------------------------------------------------------------------------
 case "$COMMAND" in
-    init)   do_init ;;
-    start)  do_start ;;
-    up)     do_init && do_start ;;
-    stop)   do_stop ;;
-    rm)     do_rm ;;
-    purge)  do_purge ;;
-    status) do_status ;;
-    *)      do_help ;;
+    init)    do_init ;;
+    start)   do_start ;;
+    up)      do_init && do_start ;;
+    stop)    do_stop ;;
+    rm)      do_rm ;;
+    purge)   do_purge ;;
+    network) if declare -F on_network >/dev/null; then require_conf; source "$CONF_FILE"; on_network "${EXTRA_ARGS[@]}"; else do_help; fi ;;
+    *)       do_help ;;
 esac

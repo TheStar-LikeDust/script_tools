@@ -96,8 +96,8 @@ docker run -d \
     --network "${INSTANCE_NAME}_net" \
     -p "${CASDOOR_PORT}:8000" \
     -e RUNNING_IN_DOCKER=true \
-    -v "$SCRIPT_DIR/data/${INSTANCE_NAME}_config/app.conf:/conf/app.conf" \
-    -v "$SCRIPT_DIR/data/${INSTANCE_NAME}_data:/data" \
+    -v "$CONF_DIR/data/${INSTANCE_NAME}_config/app.conf:/conf/app.conf" \
+    -v "$CONF_DIR/data/${INSTANCE_NAME}_data:/data" \
     --restart unless-stopped \
     casbin/casdoor:latest
 ```
@@ -131,14 +131,10 @@ docker network rm "${INSTANCE_NAME}_net"                                        
 
 ```bash
 docker stop "${INSTANCE_NAME}"; docker rm "${INSTANCE_NAME}"
-rm -rf "$SCRIPT_DIR/data/${INSTANCE_NAME}_data" "$SCRIPT_DIR/data/${INSTANCE_NAME}_config"
+rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data" "$CONF_DIR/data/${INSTANCE_NAME}_config"
 bash ../../deploy/paradedb/cli.sh purge --conf "$SCRIPT_DIR/settings_paradedb.conf"   # 附带模式
 docker network rm "${INSTANCE_NAME}_net"                                             # 附带模式
 ```
-
-#### status
-
-显示 casdoor 容器状态；附带模式下再显示 paradedb 状态。
 
 #### 无参 / 未知参数
 

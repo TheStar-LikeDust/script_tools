@@ -80,7 +80,7 @@ docker run -d \
     --name "${INSTANCE_NAME}" \
     --network "${INSTANCE_NAME}_net" \
     -p "${LOBECHAT_PORT}:3210" \
-    -v "$SCRIPT_DIR/data/${INSTANCE_NAME}_data:/app/data" \
+    -v "$CONF_DIR/data/${INSTANCE_NAME}_data:/app/data" \
     -e "DATABASE_URL=${db_url}" \
     -e "REDIS_URL=${redis_url}" \
     lobehub/lobehub:latest
@@ -119,14 +119,10 @@ docker network rm "${INSTANCE_NAME}_net"
 
 ```bash
 docker stop "${INSTANCE_NAME}"; docker rm "${INSTANCE_NAME}"
-rm -rf "$SCRIPT_DIR/data/${INSTANCE_NAME}_data"
+rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data"
 deploy_casdoor purge
 docker network rm "${INSTANCE_NAME}_net"
 ```
-
-#### status
-
-显示所有依赖与主体的运行状态。
 
 ## 6. 其他补充
 
