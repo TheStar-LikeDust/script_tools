@@ -137,7 +137,9 @@ rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data"
 
 用于免交互/容器化首次部署，仅在数据库无任何用户（全新部署）时生效；管理员创建后 `ENABLE_SIGNUP` 会被自动关闭。
 
-- `WEBUI_ADMIN_EMAIL`：管理员邮箱，需与密码同时配置才触发创建。
+注意：**必须同时填写邮箱、密码和显示名三项参数**，且不能为空值（`""`），否则自动创建将不会触发，仍需手动注册。
+
+- `WEBUI_ADMIN_EMAIL`：管理员邮箱。
 - `WEBUI_ADMIN_PASSWORD`：管理员密码，按与手动注册相同的机制哈希后存储。
 - `WEBUI_ADMIN_NAME`：管理员显示名，默认 `Admin`。
 
@@ -163,17 +165,32 @@ rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data"
 
 ## 8. 对接代理转发的 OpenAI 或第三方大模型源
 
-任何提供 OpenAI 兼容接口的上游（自建代理、LiteLLM、one-api/new-api、或其他大模型服务）均通过 `OPENAI_API_BASE_URL` 与 `OPENAI_API_KEY` 对接，这两项已在 `settings.conf` 与 `cli.sh` 中默认支持，无需改动脚本。
+任何提供 OpenAI 兼容接口的上游（自建代理、LiteLLM、one-api/new-api、或其他大模型服务）均通过 `OPENAI_API_BASE_URL` 系列变量对接，Open WebUI 将其统称为 "OpenAI API Connections"。
 
-- `OPENAI_API_BASE_URL`：上游兼容端点，需带 `/v1` 后缀，示例 `https://your-proxy.example.com/v1`。
-- `OPENAI_API_KEY`：上游鉴权密钥。对接代理或聚合服务时应使用最小权限密钥，避免直接使用管理/主密钥。
 - `ENABLE_OPENAI_API`：默认 `True`，关闭则停用全部 OpenAI 兼容接口。
 
-`settings.conf` 配置示例：
+### 方式一：覆盖/单一源
+
+如果只需要一个源（或者只用聚合网关），使用单数变量：
+- `OPENAI_API_BASE_URL`：上游兼容端点，需带 `/v1` 后缀。
+- `OPENAI_API_KEY`：上游鉴权密钥。
+
+### 方式二：保留官方源并追加多个源（复数变量）
+
+如果不想修改原有的官方 OpenAI，同时还要挂载代理或其他大模型源，使用复数变量。用分号 `;` 将多个地址与密钥拼接（顺序必须一一对应）：
+- `OPENAI_API_BASE_URLS`：示例 `https://api.openai.com/v1;https://api.b.ai/v1`
+- `OPENAI_API_KEYS`：示例 `sk-official-xxx;sk-proxy-xxx`
+
+`settings.conf` 完整配置示例：
 
 ```ini
+# 单数（单一源）
 OPENAI_API_BASE_URL="https://your-proxy.example.com/v1"
 OPENAI_API_KEY="sk-xxxxxxxx"
+
+# 复数（多源拼接，保留官方源并追加自定义源）
+OPENAI_API_BASE_URLS="https://api.openai.com/v1;https://api.b.ai/v1"
+OPENAI_API_KEYS="sk-official-key;sk-proxy-key"
 ```
 
-`OPENAI_API_BASE_URL` 与 `ENABLE_OPENAI_API` 属于 ConfigVar，首次启动后写入数据库，之后修改 `settings.conf` 不再生效（参见 7.2）。变更上游有两种方式：在管理面板 `Settings > Connections` 中修改，或临时设 `ENABLE_PERSISTENT_CONFIG=False` 后重启使环境变量重新生效。需要同时挂多个上游源时，建议在管理面板的 Connections 内逐个添加，而非依赖单一环境变量。
+这些变量属于 ConfigVar，首次启动后写入数据库，之后修改 `settings.conf` 不再生效（参见 7.2）。若需变更，建议在管理面板 `Settings > Connections` 中直接添加，或临时设 `ENABLE_PERSISTENT_CONFIG=False` 后清空容器重建使环境变量重新生效。

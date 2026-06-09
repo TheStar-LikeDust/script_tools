@@ -56,9 +56,17 @@ generate_settings() {
         name="openwebui_${ts: -4}"
     fi
 
+    local admin_suffix=$(openssl rand -hex 2)
+    local admin_name="admin_${admin_suffix}"
+    local admin_email="${admin_name}@example.com"
+    local admin_pass=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 16)
+
     sed -e "s/{{INSTANCE_NAME}}/${name}/g" \
         -e "s/{{OPENWEBUI_PORT}}/${port}/g" \
         -e "s/{{WEBUI_SECRET_KEY}}/${secret}/g" \
+        -e "s/{{WEBUI_ADMIN_EMAIL}}/${admin_email}/g" \
+        -e "s/{{WEBUI_ADMIN_PASSWORD}}/${admin_pass}/g" \
+        -e "s/{{WEBUI_ADMIN_NAME}}/${admin_name}/g" \
         "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
 }
 
@@ -112,6 +120,8 @@ do_start() {
             -e OLLAMA_BASE_URL \
             -e OPENAI_API_BASE_URL \
             -e OPENAI_API_KEY \
+            -e OPENAI_API_BASE_URLS \
+            -e OPENAI_API_KEYS \
             -e WEBUI_ADMIN_EMAIL \
             -e WEBUI_ADMIN_PASSWORD \
             -e WEBUI_ADMIN_NAME \
