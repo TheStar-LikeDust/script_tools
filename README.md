@@ -169,20 +169,24 @@ bash cli.sh rm
 bash cli.sh purge
 ```
 
-查看容器运行状态：
+查看容器运行状态（`status` 命令已移除，直接用原生 docker）：
 ```bash
-bash cli.sh status
+docker ps -a --filter name=<INSTANCE_NAME>
 ```
 
 ## 已知 TODO / 待优化
 
 ### 各 `cli.sh` 重复样板代码（与"目录即服务"冲突，待定方案）
 
-当前每个服务目录的 `cli.sh` 都重复实现了几乎一致的样板：`random_port` / `stop` / `rm` / `purge` / `status` / `case` 派发 / `print_usage`，连 `random_secret` 长度都各写各的。这违反 DRY，但抽公共库又会破坏"拷贝单个目录即带走全部资产"的核心理念。
+当前每个服务目录的 `cli.sh` 仍重复实现了一致的样板：`random_port` / `stop` / `rm` / `purge` / `case` 派发 / `do_help`，连 `random_secret` 长度都各写各的。这违反 DRY，但抽公共库又会破坏"拷贝单个目录即带走全部资产"的核心理念。
 
-候选方案（尚未决策）：
+已落地的拆分（见 `docs/design/command.md` 第 2 节）：
+- **`hooks.sh`（服务级）**：复合服务的级联依赖、附属配置渲染与组网下沉到同目录可选的 `hooks.sh`，由 `cli.sh` 在生命周期点被动回调 `on_*` 钩子。
+- **`lib/network.sh`（项目级共享库）**：跨服务复用的容器网络能力抽到根级 `lib/`，由用到它的 `hooks.sh` 经相对路径 `source`；约定不注入服务目录。`.gitignore` 已为 `lib/` 加例外以避开 Python 打包规则的误伤。
+
+仍未决策的是 `cli.sh` 骨架自身的样板复用，候选方案：
 - **方案 A（现状）**：保留重复，换取目录自包含。维护成本高。
-- **方案 B（根级共享库）**：新增 `lib/common.sh`，各 `cli.sh` 通过相对路径 `source`。代价：单目录拷贝会丢失 lib，破坏自包含。**注意**：`.gitignore` 第 17 行的 `lib/`（Python 打包规则）会误伤根级 `lib/` 目录，启用前需加例外。
-- **方案 C（init 时注入）**：`install.sh` 或各 `cli.sh` 的 `init` 把 `lib/common.sh` 拷贝进当前目录，兼顾 DRY 与自包含，但引入"生成物"的同步复杂度。
+- **方案 B（根级共享库）**：新增 `lib/common.sh`，各 `cli.sh` 通过相对路径 `source`。代价：单目录拷贝会丢失 lib，破坏自包含。
+- **方案 C（init 时注入）**：各 `cli.sh` 的 `init` 把 `lib/common.sh` 拷贝进当前目录，兼顾 DRY 与自包含，但引入"生成物"的同步复杂度。
 
 倾向方案 C，待确认后实施。

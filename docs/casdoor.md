@@ -67,7 +67,7 @@ sed -e "s/{{INSTANCE_NAME}}/casdoor_<时间戳>/g" \
 
 # 2) 委托 paradedb（附带模式）——配置与数据都落在 casdoor 目录
 bash ../../deploy/paradedb/cli.sh init \
-    --conf "$SCRIPT_DIR/settings_paradedb.conf" \
+    --conf "$CONF_DIR/settings_paradedb.conf" \
     --name "paradedb_casdoor_<时间戳>"
 
 # 3) 读回 DB 连接渲染 app.conf（附带模式：host=paradedb 容器名, port=5432 内部端口）
@@ -77,7 +77,7 @@ sed -e "s#{{CASDOOR_DB_USER}}#postgres#g" \
     -e "s#{{CASDOOR_DB_PORT}}#5432#g" \
     -e "s#{{CASDOOR_DB_BOOTSTRAP}}#postgres#g" \
     -e "s#{{CASDOOR_DB_NAME}}#casdoor#g" \
-    "$SCRIPT_DIR/templates/app.conf.tpl" > "$SCRIPT_DIR/data/${INSTANCE_NAME}_config/app.conf"
+    "$SCRIPT_DIR/templates/app.conf.tpl" > "$CONF_DIR/data/${INSTANCE_NAME}_config/app.conf"
 ```
 
 #### start
@@ -87,7 +87,7 @@ sed -e "s#{{CASDOOR_DB_USER}}#postgres#g" \
 ```bash
 # 附带模式：建网络 -> 起库 -> 把库接入网络 -> 等健康
 docker network inspect "${INSTANCE_NAME}_net" >/dev/null 2>&1 || docker network create "${INSTANCE_NAME}_net"
-bash ../../deploy/paradedb/cli.sh start --conf "$SCRIPT_DIR/settings_paradedb.conf"
+bash ../../deploy/paradedb/cli.sh start --conf "$CONF_DIR/settings_paradedb.conf"
 docker network connect "${INSTANCE_NAME}_net" "paradedb_${INSTANCE_NAME}"
 
 # 起 casdoor（附带模式带 --network；外部模式无此参数；已存在则仅 docker start）
@@ -112,7 +112,7 @@ docker run -d \
 
 ```bash
 docker stop "${INSTANCE_NAME}"
-bash ../../deploy/paradedb/cli.sh stop --conf "$SCRIPT_DIR/settings_paradedb.conf"   # 附带模式
+bash ../../deploy/paradedb/cli.sh stop --conf "$CONF_DIR/settings_paradedb.conf"   # 附带模式
 ```
 
 #### rm
@@ -121,7 +121,7 @@ bash ../../deploy/paradedb/cli.sh stop --conf "$SCRIPT_DIR/settings_paradedb.con
 
 ```bash
 docker stop "${INSTANCE_NAME}"; docker rm "${INSTANCE_NAME}"
-bash ../../deploy/paradedb/cli.sh rm --conf "$SCRIPT_DIR/settings_paradedb.conf"      # 附带模式
+bash ../../deploy/paradedb/cli.sh rm --conf "$CONF_DIR/settings_paradedb.conf"      # 附带模式
 docker network rm "${INSTANCE_NAME}_net"                                             # 附带模式
 ```
 
@@ -132,7 +132,7 @@ docker network rm "${INSTANCE_NAME}_net"                                        
 ```bash
 docker stop "${INSTANCE_NAME}"; docker rm "${INSTANCE_NAME}"
 rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data" "$CONF_DIR/data/${INSTANCE_NAME}_config"
-bash ../../deploy/paradedb/cli.sh purge --conf "$SCRIPT_DIR/settings_paradedb.conf"   # 附带模式
+bash ../../deploy/paradedb/cli.sh purge --conf "$CONF_DIR/settings_paradedb.conf"   # 附带模式
 docker network rm "${INSTANCE_NAME}_net"                                             # 附带模式
 ```
 

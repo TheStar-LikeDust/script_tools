@@ -23,7 +23,7 @@
 
 - `deploy/`：原子基础服务（如 ParadeDB、RustFS、Redis），可独立部署、启停、销毁，通过 `INSTANCE_NAME` 与端口多开隔离。
 - `deploy_apps/`：复合应用（如 LobeChat、Open WebUI），通过向下级联调用组装底层原子服务，配置上提供“内置隔离组装”与“连接外部已有服务”两种分支。复合服务的级联与组网等特殊操作集中在各自的 `hooks.sh`。
-- `tools/`：宿主机（非 docker 级）的开发环境与工具（如 code-server、tmux）。该层不受 command.md 的 docker 命令规范约束，命令集（如 `install`、`run`、`status`）按工具自身需要定义。
+- `tools/`：宿主机（非 docker 级）的开发环境与工具（如 code-server、tmux）。尽管不基于 Docker，该层仍严格遵循 command.md 的标准五段式命令规范（`init/start/up/stop/rm/purge`）与 `--conf/--name` 的沙箱化路径隔离特性，将宿主机进程（如 tmux 守护）无缝对齐到全项目的统一生命周期中，不再使用自定义的散装命令。
 
 ## 3. 编排方式：全面使用原生 docker run
 

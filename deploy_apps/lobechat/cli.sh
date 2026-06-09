@@ -48,7 +48,7 @@ require_conf() {
 conf_val() { ( . "$1" >/dev/null 2>&1; printf '%s' "${!2:-}" ); }
 
 # -----------------------------------------------------------------------------
-# 3. Special / Business Functions
+# 3. Service Config Rendering
 # -----------------------------------------------------------------------------
 generate_settings() {
     local port=$(random_port)
@@ -75,9 +75,7 @@ do_init() {
     echo "[INFO] [LobeChat Stack] Initializing full-stack configuration..."
     hr
 
-    if [ ! -f "$CONF_FILE" ]; then
-        generate_settings
-    fi
+    [ ! -f "$CONF_FILE" ] && generate_settings
     source "$CONF_FILE"
     hook on_init
 

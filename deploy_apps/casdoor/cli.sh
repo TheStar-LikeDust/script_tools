@@ -56,8 +56,13 @@ generate_settings() {
     for a in "${EXTRA_ARGS[@]}"; do [ "$a" = "--external" ] && with_db="false"; done
 
     local port=$(random_port)
-    local ts=$(date +%s)
-    sed -e "s/{{INSTANCE_NAME}}/casdoor_${ts: -4}/g" \
+    local name="$NAME_OVERRIDE"
+    if [ -z "$name" ]; then
+        local ts=$(date +%s)
+        name="casdoor_${ts: -4}"
+    fi
+
+    sed -e "s/{{INSTANCE_NAME}}/${name}/g" \
         -e "s/{{CASDOOR_PORT}}/${port}/g" \
         -e "s/{{WITH_BUNDLED_DB}}/${with_db}/g" \
         "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"

@@ -45,7 +45,7 @@ require_conf() {
 }
 
 # -----------------------------------------------------------------------------
-# 3. Special / Business Functions
+# 3. Service Config Rendering
 # -----------------------------------------------------------------------------
 generate_settings() {
     local port=$(random_port)
@@ -70,10 +70,7 @@ do_init() {
     echo "[INFO] [Open WebUI] Initializing configuration..."
     hr
 
-    if [ ! -f "$CONF_FILE" ]; then
-        generate_settings
-    fi
-
+    [ ! -f "$CONF_FILE" ] && generate_settings
     source "$CONF_FILE"
     hook on_init
 
