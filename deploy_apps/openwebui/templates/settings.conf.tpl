@@ -9,8 +9,13 @@ WEBUI_SECRET_KEY="{{WEBUI_SECRET_KEY}}"
 
 # Optional: External LLM APIs
 OLLAMA_BASE_URL="http://host.docker.internal:11434"
-OPENAI_API_BASE_URL=""
+OPENAI_API_BASE_URL="https://api.openai.com/v1"
 OPENAI_API_KEY=""
+
+# Initial Admin User (Applied only when database is empty)
+WEBUI_ADMIN_EMAIL=""
+WEBUI_ADMIN_PASSWORD=""
+WEBUI_ADMIN_NAME="Admin"
 
 # ==========================================
 # Advanced Settings

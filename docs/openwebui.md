@@ -15,6 +15,7 @@
 - `WEBUI_SECRET_KEY`: 面板 JWT 加密密钥（自动随机生成）。
 - `OLLAMA_BASE_URL`: Ollama 地址（默认 `http://host.docker.internal:11434`）。
 - `OPENAI_API_BASE_URL` / `OPENAI_API_KEY`: （可选）OpenAI 或兼容服务的地址与密钥。
+- `WEBUI_ADMIN_EMAIL` / `WEBUI_ADMIN_PASSWORD` / `WEBUI_ADMIN_NAME`: （可选）初始管理员的邮箱、密码和显示名称，仅在全新部署时生效。
 - `HF_TOKEN`: （可选）HuggingFace Token，突破 RAG 模型下载限制。
 - `CORS_ALLOW_ORIGIN`: 跨域来源，默认 `*`（生产环境不安全，建议收紧）。
 - `USER_AGENT`: 联网搜索时伪装的浏览器 UA。
@@ -74,6 +75,9 @@ docker run -d \
     -e OLLAMA_BASE_URL \
     -e OPENAI_API_BASE_URL \
     -e OPENAI_API_KEY \
+    -e WEBUI_ADMIN_EMAIL \
+    -e WEBUI_ADMIN_PASSWORD \
+    -e WEBUI_ADMIN_NAME \
     -e HF_TOKEN \
     -e CORS_ALLOW_ORIGIN \
     -e USER_AGENT \
@@ -117,3 +121,59 @@ rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data"
 
 - 生产建议：把 `CORS_ALLOW_ORIGIN` 从 `*` 收紧为实际域名；若对外暴露，建议前置反代并启用 HTTPS。
 - 镜像版本：当前固定 `ghcr.io/open-webui/open-webui:main`（滚动标签）。若需可复现部署，可改为具体版本标签。
+
+## 7. 关键环境变量参考
+
+`settings.conf` 默认仅暴露最常用变量，`cli.sh` 的 `docker run` 也只透传显式列出的 `-e` 变量。启用下列任一新增变量需同时满足两步：先写入 `settings.conf`，再在 `cli.sh` 的 `docker run` 段补一行 `-e <VAR>`。仅写进 `settings.conf` 不会自动注入容器。完整变量清单见 `env-configuration.mdx`，下文仅列部署常用项。
+
+### 7.1 ConfigVar 持久化机制
+
+部分变量被标记为 `ConfigVar`（如 `WEBUI_URL`、`ENABLE_SIGNUP`、`ENABLE_OPENAI_API`、`OPENAI_API_BASE_URL`、`DEFAULT_MODELS` 等）。这类变量仅在首次启动时读取环境变量并写入内部数据库，此后重启只读数据库内的值，外部环境变量的修改不再生效；后续应在管理面板内修改，或临时关闭持久化。非 `ConfigVar` 变量（如 `WEBUI_ADMIN_*`、`DATABASE_URL`、`REDIS_URL`、`S3_*`）每次重启均按环境变量生效。
+
+- `ENABLE_PERSISTENT_CONFIG`：默认 `True`。置为 `False` 时强制始终读取环境变量、忽略数据库，但管理面板内改动将不再持久化。
+- `ENABLE_DB_MIGRATIONS`：默认 `True`。多副本/多进程部署时仅在一个主节点设为 `True`，其余设 `False`，避免迁移竞态。
+
+### 7.2 自动创建管理员
+
+用于免交互/容器化首次部署，仅在数据库无任何用户（全新部署）时生效；管理员创建后 `ENABLE_SIGNUP` 会被自动关闭。
+
+- `WEBUI_ADMIN_EMAIL`：管理员邮箱，需与密码同时配置才触发创建。
+- `WEBUI_ADMIN_PASSWORD`：管理员密码，按与手动注册相同的机制哈希后存储。
+- `WEBUI_ADMIN_NAME`：管理员显示名，默认 `Admin`。
+
+### 7.3 外部数据库与状态存储
+
+默认使用内置 SQLite，单实例本地磁盘即可。多副本、多 worker 或数据目录位于网络存储时必须切换为外部 PostgreSQL。
+
+- `DATABASE_URL`：完整的 SQLAlchemy 连接串，优先级最高，示例 `postgresql://user:password@host:5432/openwebui`；密码含特殊字符需 URL 编码（`@` 写作 `%40`）。
+- `VECTOR_DB`：向量库类型，默认 `chroma`，多副本场景建议 `pgvector`。
+- `PGVECTOR_DB_URL`：`pgvector` 连接串，默认回退到 `DATABASE_URL`，即与主库共用同一 PostgreSQL。
+- `REDIS_URL`：外部 Redis 地址，示例 `redis://:password@host:6379/0`。单实例非必需，多 worker/多节点必须配置，否则会话与 WebSocket 状态无法跨实例共享。
+
+### 7.4 对象存储 (S3 / RustFS / MinIO)
+
+将上传文件外置到对象存储，对应本项目的 `deploy/rustfs`。
+
+- `STORAGE_PROVIDER`：留空为 `local`，置为 `s3` 启用 S3 兼容存储。
+- `S3_ENDPOINT_URL`：S3 兼容端点地址。
+- `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`：访问凭证。
+- `S3_BUCKET_NAME`：存储桶名称。
+- `S3_REGION_NAME`：区域名称，部分自建服务可填任意占位值。
+- 自签私有 CA 端点用 `AWS_CA_BUNDLE` 指定 PEM；Cloudflare R2 须设 `S3_ENABLE_TAGGING=False`。
+
+## 8. 对接代理转发的 OpenAI 或第三方大模型源
+
+任何提供 OpenAI 兼容接口的上游（自建代理、LiteLLM、one-api/new-api、或其他大模型服务）均通过 `OPENAI_API_BASE_URL` 与 `OPENAI_API_KEY` 对接，这两项已在 `settings.conf` 与 `cli.sh` 中默认支持，无需改动脚本。
+
+- `OPENAI_API_BASE_URL`：上游兼容端点，需带 `/v1` 后缀，示例 `https://your-proxy.example.com/v1`。
+- `OPENAI_API_KEY`：上游鉴权密钥。对接代理或聚合服务时应使用最小权限密钥，避免直接使用管理/主密钥。
+- `ENABLE_OPENAI_API`：默认 `True`，关闭则停用全部 OpenAI 兼容接口。
+
+`settings.conf` 配置示例：
+
+```ini
+OPENAI_API_BASE_URL="https://your-proxy.example.com/v1"
+OPENAI_API_KEY="sk-xxxxxxxx"
+```
+
+`OPENAI_API_BASE_URL` 与 `ENABLE_OPENAI_API` 属于 ConfigVar，首次启动后写入数据库，之后修改 `settings.conf` 不再生效（参见 7.2）。变更上游有两种方式：在管理面板 `Settings > Connections` 中修改，或临时设 `ENABLE_PERSISTENT_CONFIG=False` 后重启使环境变量重新生效。需要同时挂多个上游源时，建议在管理面板的 Connections 内逐个添加，而非依赖单一环境变量。

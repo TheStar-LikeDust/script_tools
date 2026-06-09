@@ -112,6 +112,9 @@ do_start() {
             -e OLLAMA_BASE_URL \
             -e OPENAI_API_BASE_URL \
             -e OPENAI_API_KEY \
+            -e WEBUI_ADMIN_EMAIL \
+            -e WEBUI_ADMIN_PASSWORD \
+            -e WEBUI_ADMIN_NAME \
             -e HF_TOKEN \
             -e CORS_ALLOW_ORIGIN \
             -e USER_AGENT \
