@@ -101,33 +101,33 @@ do_start() {
 
     # Resolve connection settings: internal => reach bundled containers by name on $net
     local db_url redis_url s3_endpoint s3_bucket s3_ak s3_sk casdoor_issuer casdoor_id casdoor_secret
-    if [ "$USE_INTERNAL_DB" = "true" ]; then
+    if [ "${USE_INTERNAL_DB:-true}" = "true" ]; then
         db_url="postgresql://$(conf_val "$PG_CONF" DB_USER):$(conf_val "$PG_CONF" DB_PASSWORD)@paradedb_${INSTANCE_NAME}:5432/$(conf_val "$PG_CONF" DB_NAME)"
     else
-        db_url="postgresql://${EXTERNAL_DB_USER}:${EXTERNAL_DB_PASSWORD}@${EXTERNAL_DB_HOST}:${EXTERNAL_DB_PORT}/${EXTERNAL_DB_NAME}"
+        db_url="postgresql://${EXTERNAL_DB_USER:-postgres}:${EXTERNAL_DB_PASSWORD:-}@${EXTERNAL_DB_HOST:-}:${EXTERNAL_DB_PORT:-5432}/${EXTERNAL_DB_NAME:-lobechat}"
     fi
-    if [ "$USE_INTERNAL_REDIS" = "true" ]; then
+    if [ "${USE_INTERNAL_REDIS:-true}" = "true" ]; then
         redis_url="redis://redis_${INSTANCE_NAME}:6379"
     else
-        redis_url="$EXTERNAL_REDIS_URL"
+        redis_url="${EXTERNAL_REDIS_URL:-}"
     fi
-    if [ "$USE_INTERNAL_S3" = "true" ]; then
+    if [ "${USE_INTERNAL_S3:-true}" = "true" ]; then
         s3_endpoint="http://rustfs_${INSTANCE_NAME}:9000"
-        s3_bucket="$S3_BUCKET"
+        s3_bucket="${S3_BUCKET:-lobechat}"
         s3_ak="$(conf_val "$RUSTFS_CONF" RUSTFS_ACCESS_KEY)"
         s3_sk="$(conf_val "$RUSTFS_CONF" RUSTFS_SECRET_KEY)"
     else
-        s3_endpoint="$EXTERNAL_S3_ENDPOINT"; s3_bucket="$EXTERNAL_S3_BUCKET"
-        s3_ak="$EXTERNAL_S3_ACCESS_KEY"; s3_sk="$EXTERNAL_S3_SECRET_KEY"
+        s3_endpoint="${EXTERNAL_S3_ENDPOINT:-}"; s3_bucket="${EXTERNAL_S3_BUCKET:-lobechat}"
+        s3_ak="${EXTERNAL_S3_ACCESS_KEY:-}"; s3_sk="${EXTERNAL_S3_SECRET_KEY:-}"
     fi
-    if [ "$USE_INTERNAL_CASDOOR" = "true" ]; then
-        casdoor_issuer="http://${CASDOOR_PUBLIC_HOST}:$(conf_val "$CASDOOR_CONF" CASDOOR_PORT)"
-        casdoor_id="$CASDOOR_CLIENT_ID"
-        casdoor_secret="$CASDOOR_CLIENT_SECRET"
+    if [ "${USE_INTERNAL_CASDOOR:-true}" = "true" ]; then
+        casdoor_issuer="http://${CASDOOR_PUBLIC_HOST:-localhost}:$(conf_val "$CASDOOR_CONF" CASDOOR_PORT)"
+        casdoor_id="${CASDOOR_CLIENT_ID:-}"
+        casdoor_secret="${CASDOOR_CLIENT_SECRET:-}"
     else
-        casdoor_issuer="$EXTERNAL_CASDOOR_ISSUER"
-        casdoor_id="$EXTERNAL_CASDOOR_ID"
-        casdoor_secret="$EXTERNAL_CASDOOR_SECRET"
+        casdoor_issuer="${EXTERNAL_CASDOOR_ISSUER:-}"
+        casdoor_id="${EXTERNAL_CASDOOR_ID:-}"
+        casdoor_secret="${EXTERNAL_CASDOOR_SECRET:-}"
     fi
 
     mkdir -p "${CONF_DIR}/data/${INSTANCE_NAME}_data"
