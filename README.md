@@ -9,13 +9,13 @@
 - **目录即服务 (Service as a Directory)**：一个服务运行所需的全部元素（配置、脚本、持久化数据）全部内聚在专属文件夹中。备份或迁移服务，只需拷贝这一个文件夹，目录在服务器上也可随意移动而不会失效。
 - **纯原生 Docker 架构**：全面弃用 `docker-compose`。无论是单体应用还是复合微服务系统，全靠纯粹的 `docker run` 与原生隔离网络来拉起。只需安装最基础的 Docker，即刻可用。
 - **傻瓜化与防冲突沙箱**：屏蔽繁琐的 Docker 参数。所有的生命周期管理标准化封装在 `cli.sh` 中（例如 `bash cli.sh up` 一键启动）。内置端口与实例名防碰撞机制，在同机拉起 10 个相同的服务也互不干扰。
-- **高自由度组装**：通过“委托式级联”机制实现服务的原子化。既能一键拉起全套业务栈（如 LobeChat + 专属数据库），也能通过改一行配置，将业务无缝接入已有的外部中间件。
+- **高自由度组装**：通过“委托式级联”机制实现服务的原子化。既能一键拉起全套业务栈（如 New API + 专属数据库 + Redis），也能通过改一行配置，将业务无缝接入已有的外部中间件。
 
 ## 项目架构
 
 本项目将部署逻辑分为三层：
 - **`deploy/` (基础部署)**：原子的、可独立运行的服务组件（如 paradedb, rustfs, redis）。
-- **`deploy_apps/` (复合应用)**：按用途划分的应用层组件（如 lobechat 全栈【暂时终止开发】、openwebui、casdoor），可组合多个基础服务实现一键部署。
+- **`deploy_apps/` (复合应用)**：按用途划分的应用层组件（如 lobechat 全栈【暂时终止开发】、openwebui、casdoor、newapi），可组合多个基础服务实现一键部署。
 - **`tools/` (宿主机工具)**：用于存放宿主机（非 Docker 级别的）环境配置和开发工具（如 code-server, tmux 等）。
 
 > **深入了解底层实现？**
@@ -76,17 +76,15 @@ bash cli.sh up
 
 如果后续需要防端口冲突或起第二个库，只需修改 `settings.conf` 里的 `INSTANCE_NAME`/端口等参数，再执行 `bash cli.sh rm && bash cli.sh start` 重建生效（数据在 `./data` 卷里，不会丢）。
 
-### 场景二：一键部署全栈业务 (以 LobeChat 为例)
+### 场景二：一键部署全栈业务 (以 New API 为例)
 
-> **⚠️ 注意：LobeChat 全栈部署的开发已暂时终止，以下内容仅作级联组装架构的设计演示与参考。**
-
-当你需要拉起一套包含 ParadeDB + RustFS + Redis + Casdoor + LobeChat 的完整架构时：
+当你需要拉起一套包含 ParadeDB + Redis + New API 的完整架构时：
 
 ```bash
-cd deploy_apps/lobechat
+cd deploy_apps/newapi
 ```
 
-**方式 1：标准部署（推荐，支持连接外部数据库）**
+**方式 1：标准部署（推荐，支持自定义配置）**
 
 首先，仅生成配置文件：
 
@@ -94,34 +92,24 @@ cd deploy_apps/lobechat
 bash cli.sh init
 ```
 
-此时会生成 `settings.conf`。你可以根据需求选择：
-- **方案 A（内置隔离库）**：保持 `USE_INTERNAL_DB="true"` 不变，会自动新建一个 LobeChat 专属库。
-- **方案 B（连接已有数据库）**：如果你想把 LobeChat 连到“场景一”建好的测试库或者云厂商 RDS，请修改以下配置：
-
-```bash
-USE_INTERNAL_DB="false"
-EXTERNAL_DB_HOST="<已有库的IP或容器名>"
-EXTERNAL_DB_PASSWORD="<已有库的密码>"
-```
-
-配置修改保存后，执行全栈启动：
+此时会在 newapi 目录下生成三份配置：`settings.conf`（New API 自身的端口与实例名）、`settings_paradedb.conf` 和 `settings_redis.conf`（两个附带依赖的凭证与端口）。按需检查修改后，执行全栈启动：
 
 ```bash
 bash cli.sh start
 ```
 
-**方式 2：快速一键启动（使用全套内置默认组件）**
+**方式 2：快速一键启动（全部使用随机默认值）**
 
-如果你不需要复用之前的数据库，只想要一个完全独立的新环境，可直接一键拉起：
+如果你只想要一个完全独立的新环境，可直接一键拉起：
 
 ```bash
 bash cli.sh up
 ```
 
 **发生了什么？**
-- **委托式级联**：控制器调用各基础服务自己的 `cli.sh --conf settings_X.conf --name X_<实例名>`，把依赖的配置与数据都安置在 lobechat 目录下；实例名如 `paradedb_lobechat_8421`。casdoor 作为同级 app 被直接调用，并自带一个独立 paradedb（全量捆绑时共两个 paradedb 容器）。
-- **外部模式**：任一依赖置 `USE_INTERNAL_*=false` 时，LobeChat 不启动该容器，而是直接读 `EXTERNAL_*` 连接信息。
-- **app 级组网**：`start` 时建一个 user-defined network `<实例名>_net`，把所有依赖与 LobeChat 容器接入，按名互通；lobechat 自身也是纯 `docker run`，不再依赖 docker compose。
+- **委托式级联**：控制器调用各基础服务自己的 `cli.sh --conf settings_X.conf --name X_<实例名>`，把依赖的配置与数据都安置在 newapi 目录下；实例名如 `paradedb_newapi_8421`、`redis_newapi_8421`。
+- **连接串实时拼装**：`SQL_DSN` 与 `REDIS_CONN_STRING` 不落盘，每次 `start` 时从两份附带配置实时读取拼装（host 为依赖容器名），经 `-e` 注入 New API 容器。
+- **app 级组网**：`start` 时建一个 user-defined network `<实例名>_net`，把 ParadeDB、Redis 与 New API 容器接入，按名互通；全程纯 `docker run`，不依赖 docker compose。
 
 ### 场景三：部署单容器应用 (以 Open WebUI 为例)
 
