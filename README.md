@@ -15,7 +15,7 @@
 
 本项目将部署逻辑分为三层：
 - **`deploy/` (基础部署)**：原子的、可独立运行的服务组件（如 paradedb, rustfs, redis）。
-- **`deploy_apps/` (复合应用)**：按用途划分的应用层组件（如 lobechat 全栈、openwebui、casdoor），可组合多个基础服务实现一键部署。
+- **`deploy_apps/` (复合应用)**：按用途划分的应用层组件（如 lobechat 全栈【暂时终止开发】、openwebui、casdoor），可组合多个基础服务实现一键部署。
 - **`tools/` (宿主机工具)**：用于存放宿主机（非 Docker 级别的）环境配置和开发工具（如 code-server, tmux 等）。
 
 > **深入了解底层实现？**
@@ -77,6 +77,8 @@ bash cli.sh up
 如果后续需要防端口冲突或起第二个库，只需修改 `settings.conf` 里的 `INSTANCE_NAME`/端口等参数，再执行 `bash cli.sh rm && bash cli.sh start` 重建生效（数据在 `./data` 卷里，不会丢）。
 
 ### 场景二：一键部署全栈业务 (以 LobeChat 为例)
+
+> **⚠️ 注意：LobeChat 全栈部署的开发已暂时终止，以下内容仅作级联组装架构的设计演示与参考。**
 
 当你需要拉起一套包含 ParadeDB + RustFS + Redis + Casdoor + LobeChat 的完整架构时：
 
