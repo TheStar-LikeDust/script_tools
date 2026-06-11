@@ -13,6 +13,8 @@
 - `INSTANCE_NAME`: 实例名（时间戳后缀，如 `newapi_8421`），决定容器名与数据目录。
 - `NEWAPI_PORT`: 对外暴露的 Web UI / API 端口（容器内 `3000`）。
 - `TZ`: 容器时区，默认 `Asia/Shanghai`。
+- `ERROR_LOG_ENABLED`: 记录错误日志并在 Web 控制台展示，默认 `true`。
+- `CRYPTO_SECRET`: 数据库敏感内容（如渠道密钥）的加密密钥，`init` 时随机生成。首次启动后严禁更换，否则已加密数据无法解密。
 
 ### settings_paradedb.conf
 
@@ -60,6 +62,7 @@ bash cli.sh purge
 # 1) new-api 自身配置（仅首次）
 sed -e "s/{{INSTANCE_NAME}}/newapi_<时间戳>/g" \
     -e "s/{{NEWAPI_PORT}}/<随机端口>/g" \
+    -e "s/{{CRYPTO_SECRET}}/<随机密钥>/g" \
     "$SCRIPT_DIR/templates/settings.conf.tpl" > settings.conf
 
 # 2) 委托 paradedb 与 redis——配置与数据都落在 newapi 目录
@@ -91,6 +94,8 @@ docker run -d \
     -e SQL_DSN="postgresql://postgres:<随机密码>@paradedb_${INSTANCE_NAME}:5432/postgres" \
     -e REDIS_CONN_STRING="redis://redis_${INSTANCE_NAME}:6379" \
     -e TZ="Asia/Shanghai" \
+    -e ERROR_LOG_ENABLED="true" \
+    -e CRYPTO_SECRET="<随机密钥>" \
     -v "$CONF_DIR/data/${INSTANCE_NAME}_data:/data" \
     --health-cmd "wget -qO- http://localhost:3000/api/status >/dev/null || exit 1" \
     --restart unless-stopped \

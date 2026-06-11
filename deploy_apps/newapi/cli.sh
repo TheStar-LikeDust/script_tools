@@ -37,6 +37,7 @@ hook() { if declare -F "$1" >/dev/null; then "$1"; fi; }
 # -----------------------------------------------------------------------------
 hr() { echo "-----------------------------------------------------------------------------"; }
 random_port() { shuf -i 30000-40000 -n 1; }
+random_secret() { openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32; }
 
 container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
 
@@ -52,6 +53,7 @@ require_conf() {
 # -----------------------------------------------------------------------------
 generate_settings() {
     local port=$(random_port)
+    local secret=$(random_secret)
     local name="$NAME_OVERRIDE"
     if [ -z "$name" ]; then
         local ts=$(date +%s)
@@ -60,6 +62,7 @@ generate_settings() {
 
     sed -e "s/{{INSTANCE_NAME}}/${name}/g" \
         -e "s/{{NEWAPI_PORT}}/${port}/g" \
+        -e "s/{{CRYPTO_SECRET}}/${secret}/g" \
         "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
 }
 
@@ -112,6 +115,8 @@ do_start() {
             -e SQL_DSN="$SQL_DSN" \
             -e REDIS_CONN_STRING="$REDIS_CONN_STRING" \
             -e TZ="$TZ" \
+            -e ERROR_LOG_ENABLED="$ERROR_LOG_ENABLED" \
+            -e CRYPTO_SECRET="$CRYPTO_SECRET" \
             -v "$CONF_DIR/data/${INSTANCE_NAME}_data:/data" \
             --health-cmd "wget -qO- http://localhost:3000/api/status >/dev/null || exit 1" \
             --health-interval 30s \
