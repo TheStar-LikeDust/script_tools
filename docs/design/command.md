@@ -96,6 +96,7 @@ do_start() {
 do_stop()  { ...; hook on_stop; }
 do_rm()    { ...; hook on_rm; }
 do_purge() { ...; hook on_purge; }
+do_reset() { do_purge; rm -f "$CONF_DIR"/settings*.conf; }   # purge + 删除本服务所有 settings
 do_help()  { ... }
 
 # -----------------------------------------------------------------------------
@@ -108,6 +109,7 @@ case "$COMMAND" in
     stop)    do_stop ;;
     rm)      do_rm ;;
     purge)   do_purge ;;
+    reset)   do_reset ;;
     network) if declare -F on_network >/dev/null; then require_conf; source "$CONF_FILE"; on_network "${EXTRA_ARGS[@]}"; else do_help; fi ;;
     *)       do_help ;;
 esac
@@ -123,6 +125,7 @@ esac
 - stop：仅停止容器进程，不删除容器与数据（集合服务经 on_stop 一并停止附带依赖）。
 - rm：删除容器（集合服务经 on_rm 一并删除附带依赖与网络等隔离资源），但必须保留 data 与 settings.conf。
 - purge：危险操作，在 rm 基础上彻底删除 data 数据目录；但必须保留 settings.conf，避免随机密钥永久丢失。bind-mount 数据常由容器内 root 进程写入，宿主机非 root 用户直接 `rm -rf` 会因属主权限失败；故 docker 服务统一用一次性 root 容器删除（`docker run --rm -v "${CONF_DIR}/data:/purge" alpine rm -rf "/purge/${INSTANCE_NAME}_data"`），且不得用 `2>/dev/null || true` 吞掉错误，以免删除失败却回显成功。宿主机级工具（如 codeserver）数据归当前用户，普通 `rm -rf` 即可，但同样不静默吞错。
+- reset：破坏力最强的命令，破坏阶梯为 rm → purge → reset。先执行 purge（删容器+data，复合服务经 on_purge 级联清依赖 data），再 `rm -f "$CONF_DIR"/settings*.conf` 删除本服务目录下所有生成配置（`settings.conf` 及 `settings_paradedb.conf`/`settings_redis.conf` 等附属配置），把目录还原成 git clone 时的纯源文件态。顺序上 purge 必须在前（purge 依赖 settings.conf 读取 INSTANCE_NAME），删 settings 放最后。与 init 对称：init 生成全部生成物，reset 清空全部生成物。
 
 注：status 不属于标准命令集（已移除）。查看实例运行状态直接用 `docker ps -a --filter name=<INSTANCE_NAME>`。
 

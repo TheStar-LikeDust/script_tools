@@ -185,14 +185,24 @@ do_purge() {
     hr
 }
 
+do_reset() {
+    do_purge
+    echo "[INFO] Removing all generated settings under this service..."
+    rm -f "$CONF_DIR"/settings*.conf
+    hr
+    echo "[SUCCESS] Open WebUI reset complete (restored to pristine source files)."
+    hr
+}
+
 do_help() {
-    echo "Usage: $0 {init|start|up|stop|rm|purge} [--conf PATH] [--name NAME]"
+    echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME]"
     echo "  init    : Generate settings.conf and create data dir, without starting"
     echo "  start   : Start the container (run if absent, otherwise just start it)"
     echo "  up      : Initialize config and start the container instantly"
     echo "  stop    : Stop the running container"
     echo "  rm      : Remove the container (Preserves ./data and settings.conf)"
     echo "  purge   : DANGER - Remove container AND permanently delete ./data (Preserves settings.conf)"
+    echo "  reset   : DANGER - purge AND delete ALL settings (back to pristine source files)"
     echo ""
     echo "Options (for embedding as a sub-service under another app):"
     echo "  --conf PATH : Config file location (default: <script_dir>/settings.conf)."
@@ -210,6 +220,7 @@ case "$COMMAND" in
     stop)    do_stop ;;
     rm)      do_rm ;;
     purge)   do_purge ;;
+    reset)   do_reset ;;
     network) if declare -F on_network >/dev/null; then require_conf; source "$CONF_FILE"; on_network "${EXTRA_ARGS[@]}"; else do_help; fi ;;
     *)       do_help ;;
 esac

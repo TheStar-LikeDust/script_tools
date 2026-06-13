@@ -173,14 +173,24 @@ do_purge() {
     hr
 }
 
+do_reset() {
+    do_purge
+    echo "[INFO] [Casdoor] Removing all generated settings under this service..."
+    rm -f "$CONF_DIR"/settings*.conf
+    hr
+    echo "[SUCCESS] [Casdoor] Reset complete (restored to pristine source files)."
+    hr
+}
+
 do_help() {
-    echo "Usage: $0 {init|start|up|stop|rm|purge} [--external] [--conf PATH] [--name NAME]"
+    echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--external] [--conf PATH] [--name NAME]"
     echo "  init        : Generate settings.conf (+ bundled paradedb) and render app.conf, without starting"
     echo "  start       : Start bundled DB (if any) then the Casdoor container"
     echo "  up          : init + start"
     echo "  stop        : Stop Casdoor (and bundled DB)"
     echo "  rm          : Remove containers (Preserves data and configs)"
     echo "  purge       : DANGER - Remove containers AND delete data (Preserves configs)"
+    echo "  reset       : DANGER - purge AND delete ALL settings (back to pristine source files)"
     echo "  network ls  : Show the app network and attached containers"
     echo ""
     echo "  --external  : (init/up only) Do NOT bundle paradedb; connect to an external DB"
@@ -197,6 +207,7 @@ case "$COMMAND" in
     stop)    do_stop ;;
     rm)      do_rm ;;
     purge)   do_purge ;;
+    reset)   do_reset ;;
     network) if declare -F on_network >/dev/null; then require_conf; source "$CONF_FILE"; on_network "${EXTRA_ARGS[@]}"; else do_help; fi ;;
     *)       do_help ;;
 esac

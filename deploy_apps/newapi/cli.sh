@@ -176,14 +176,24 @@ do_purge() {
     hr
 }
 
+do_reset() {
+    do_purge
+    echo "[INFO] [NewAPI] Removing all generated settings under this service..."
+    rm -f "$CONF_DIR"/settings*.conf
+    hr
+    echo "[SUCCESS] [NewAPI] Reset complete (restored to pristine source files)."
+    hr
+}
+
 do_help() {
-    echo "Usage: $0 {init|start|up|stop|rm|purge} [--conf PATH] [--name NAME]"
+    echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME]"
     echo "  init        : Generate settings.conf (+ bundled paradedb/redis configs), without starting"
     echo "  start       : Start bundled DB + Redis, then the New API container"
     echo "  up          : init + start"
     echo "  stop        : Stop New API (and bundled deps)"
     echo "  rm          : Remove containers (Preserves data and configs)"
     echo "  purge       : DANGER - Remove containers AND delete data (Preserves configs)"
+    echo "  reset       : DANGER - purge AND delete ALL settings (back to pristine source files)"
     echo "  network ls  : Show the app network and attached containers"
 }
 
@@ -197,6 +207,7 @@ case "$COMMAND" in
     stop)    do_stop ;;
     rm)      do_rm ;;
     purge)   do_purge ;;
+    reset)   do_reset ;;
     network) if declare -F on_network >/dev/null; then require_conf; source "$CONF_FILE"; on_network "${EXTRA_ARGS[@]}"; else do_help; fi ;;
     *)       do_help ;;
 esac

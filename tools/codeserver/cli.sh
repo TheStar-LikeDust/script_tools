@@ -182,14 +182,24 @@ do_purge() {
     hr
 }
 
+do_reset() {
+    do_purge
+    echo "[INFO] [Code-Server] Removing all generated settings under this service..."
+    rm -f "$CONF_DIR"/settings*.conf
+    hr
+    echo "[SUCCESS] [Code-Server] Reset complete (restored to pristine source files)."
+    hr
+}
+
 do_help() {
-    echo "Usage: $0 {init|start|up|stop|rm|purge} [--conf PATH] [--name NAME]"
+    echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME]"
     echo "  init    : Generate settings.conf and config.yaml, install code-server if absent"
     echo "  start   : Start code-server in the background using tmux"
     echo "  up      : Initialize config and start the service instantly"
     echo "  stop    : Stop the running tmux session"
     echo "  rm      : Equivalent to stop for host-level tools"
     echo "  purge   : DANGER - Stop session AND permanently delete ./data (Preserves settings.conf)"
+    echo "  reset   : DANGER - purge AND delete ALL settings (back to pristine source files)"
     echo ""
     echo "Options (for embedding as a sub-service under another app):"
     echo "  --conf PATH : Config file location (default: <script_dir>/settings.conf)."
@@ -207,5 +217,6 @@ case "$COMMAND" in
     stop)    do_stop ;;
     rm)      do_rm ;;
     purge)   do_purge ;;
+    reset)   do_reset ;;
     *)       do_help ;;
 esac

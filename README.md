@@ -161,6 +161,13 @@ bash cli.sh purge
 
 > 容器数据多由内部 root 进程写入，宿主机普通用户直接删会因属主权限失败。为此 docker 服务的 `purge` 会借一个一次性 root 容器来删除数据目录，无需 `sudo` 也能彻底清干净；删除失败会显式报错，不会假装成功。
 
+**【危险·最强】**彻底重置：在 `purge` 基础上再删除该服务目录下所有 settings（`settings.conf` 及 `settings_*.conf` 等），把目录还原成 `git clone` 时的纯源文件态：
+```bash
+bash cli.sh reset
+```
+
+> 破坏力阶梯为 `rm` → `purge` → `reset`。`reset` 会一并删掉含随机密钥的 `settings.conf`，且为复合服务清空附带依赖的全部生成配置；执行后需重新 `init` 才能再次启动。
+
 查看容器运行状态（`status` 命令已移除，直接用原生 docker）：
 ```bash
 docker ps -a --filter name=<INSTANCE_NAME>

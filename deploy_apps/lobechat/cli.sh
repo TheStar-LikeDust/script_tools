@@ -210,14 +210,24 @@ do_purge() {
     hr
 }
 
+do_reset() {
+    do_purge
+    echo "[INFO] Removing all generated settings under this service..."
+    rm -f "$CONF_DIR"/settings*.conf
+    hr
+    echo "[SUCCESS] LobeChat Stack reset complete (restored to pristine source files)."
+    hr
+}
+
 do_help() {
-    echo "Usage: $0 {init|start|up|stop|rm|purge} [--conf PATH] [--name NAME]"
+    echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME]"
     echo "  init    : Generate settings.conf and initialize bundled dependencies, without starting"
     echo "  start   : Start dependencies then the LobeChat container (pure docker run, no compose)"
     echo "  up      : Initialize configs and start containers instantly"
     echo "  stop    : Stop running containers"
     echo "  rm      : Remove containers (Preserves ./data and configs)"
     echo "  purge   : DANGER - Remove containers AND permanently delete ./data (Preserves configs)"
+    echo "  reset   : DANGER - purge AND delete ALL settings (back to pristine source files)"
     echo ""
     echo "Internal vs external dependencies are toggled by USE_INTERNAL_* in settings.conf."
     echo "Bundled paradedb/redis/rustfs are delegated via --conf (settings_*.conf live here);"
@@ -234,6 +244,7 @@ case "$COMMAND" in
     stop)    do_stop ;;
     rm)      do_rm ;;
     purge)   do_purge ;;
+    reset)   do_reset ;;
     network) if declare -F on_network >/dev/null; then require_conf; source "$CONF_FILE"; on_network "${EXTRA_ARGS[@]}"; else do_help; fi ;;
     *)       do_help ;;
 esac
