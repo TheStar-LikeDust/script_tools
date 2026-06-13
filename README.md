@@ -159,6 +159,8 @@ bash cli.sh rm
 bash cli.sh purge
 ```
 
+> 容器数据多由内部 root 进程写入，宿主机普通用户直接删会因属主权限失败。为此 docker 服务的 `purge` 会借一个一次性 root 容器来删除数据目录，无需 `sudo` 也能彻底清干净；删除失败会显式报错，不会假装成功。
+
 查看容器运行状态（`status` 命令已移除，直接用原生 docker）：
 ```bash
 docker ps -a --filter name=<INSTANCE_NAME>

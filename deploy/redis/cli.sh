@@ -153,7 +153,9 @@ do_purge() {
     local data_dir="${CONF_DIR}/data/${INSTANCE_NAME}_data"
     if [ -d "$data_dir" ]; then
         echo "Removing local data directory..."
-        rm -rf "$data_dir" 2>/dev/null || true
+        # Data is bind-mounted and often written as root inside the container;
+        # delete via a throwaway root container to avoid host permission errors.
+        docker run --rm -v "${CONF_DIR}/data:/purge" alpine rm -rf "/purge/${INSTANCE_NAME}_data"
     fi
 
     hook on_purge

@@ -122,7 +122,7 @@ esac
 - up：一键组合，等价于 init 加上 start，用于纯默认值快速体验。
 - stop：仅停止容器进程，不删除容器与数据（集合服务经 on_stop 一并停止附带依赖）。
 - rm：删除容器（集合服务经 on_rm 一并删除附带依赖与网络等隔离资源），但必须保留 data 与 settings.conf。
-- purge：危险操作，在 rm 基础上彻底删除 data 数据目录；但必须保留 settings.conf，避免随机密钥永久丢失。
+- purge：危险操作，在 rm 基础上彻底删除 data 数据目录；但必须保留 settings.conf，避免随机密钥永久丢失。bind-mount 数据常由容器内 root 进程写入，宿主机非 root 用户直接 `rm -rf` 会因属主权限失败；故 docker 服务统一用一次性 root 容器删除（`docker run --rm -v "${CONF_DIR}/data:/purge" alpine rm -rf "/purge/${INSTANCE_NAME}_data"`），且不得用 `2>/dev/null || true` 吞掉错误，以免删除失败却回显成功。宿主机级工具（如 codeserver）数据归当前用户，普通 `rm -rf` 即可，但同样不静默吞错。
 
 注：status 不属于标准命令集（已移除）。查看实例运行状态直接用 `docker ps -a --filter name=<INSTANCE_NAME>`。
 

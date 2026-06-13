@@ -171,8 +171,10 @@ do_purge() {
     
     if [ -d "$abs_config_dir" ] || [ -d "$abs_user_data_dir" ]; then
         echo "Removing local data directory..."
-        rm -rf "$abs_config_dir" 2>/dev/null || true
-        rm -rf "$abs_user_data_dir" 2>/dev/null || true
+        # Host-level tool: data is owned by the current user, plain rm is enough.
+        # Do not silence errors so a failed delete is not reported as success.
+        rm -rf "$abs_config_dir"
+        rm -rf "$abs_user_data_dir"
     fi
 
     hr
