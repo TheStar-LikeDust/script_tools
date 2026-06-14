@@ -15,8 +15,8 @@
 
 本项目将部署逻辑分为三层：
 - **`deploy/` (基础部署)**：原子的、可独立运行的服务组件（如 paradedb, rustfs, redis）。
-- **`deploy_apps/` (复合应用)**：按用途划分的应用层组件（如 lobechat 全栈【暂时终止开发】、openwebui、casdoor、newapi），可组合多个基础服务实现一键部署。
-- **`tools/` (宿主机工具)**：用于存放宿主机（非 Docker 级别的）环境配置和开发工具（如 code-server, tmux 等）。
+- **`deploy_apps/` (复合应用)**：按用途划分的应用层组件（如 lobechat 全栈【暂时终止开发】、openwebui、casdoor、newapi、sub2api），可组合多个基础服务实现一键部署。
+- **`tools/` (宿主机工具)**：用于存放宿主机（非 Docker 级别的）环境配置和开发工具（如 code-server、nginx 反代网关、docker 宿主机配置 ufw-docker 等）。
 
 > **深入了解底层实现？**
 > 我们把所有底层架构细节剥离到了设计文档中。如果你想了解我们为何摒弃 `docker-compose`、多环境隔离的动态组网原理以及为何使用特殊机制注入配置，请参阅：
