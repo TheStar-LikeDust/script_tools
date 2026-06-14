@@ -10,7 +10,7 @@
 
 ## 2. 核心配置项
 
-### settings.conf
+### settings_lobechat.conf
 
 - `INSTANCE_NAME`: 全局业务实例名，时间戳后缀（默认如 `lobechat_8421`），决定容器名、数据目录与网络名 `${INSTANCE_NAME}_net`。
 - `LOBECHAT_PORT`: 面板对外暴露的宿主机端口（容器内 `3210`）。
@@ -29,14 +29,14 @@
 ## 3. 备注
 
 - S3 存储桶预建：内部部署的 RustFS 默认不自动建桶，需在全栈首次启动后，登录 RustFS 控制台手动创建 `lobechat` 桶。
-- SSO 首次接入流程：首次 `up` 拉起后，需登录 Casdoor 后台为 LobeChat 手动创建应用获取 Client ID/Secret，填入 `settings.conf` 后执行 `bash cli.sh rm && bash cli.sh start` 重建容器使其生效。
+- SSO 首次接入流程：首次 `up` 拉起后，需登录 Casdoor 后台为 LobeChat 手动创建应用获取 Client ID/Secret，填入 `settings_lobechat.conf` 后执行 `bash cli.sh rm && bash cli.sh start` 重建容器使其生效。
 
 ## 4. 快速执行
 
 ```bash
 cd deploy_apps/lobechat
 
-# 常规分步拉起（推荐）：先生成配置、按需修改 settings.conf 后再启动
+# 常规分步拉起（推荐）：先生成配置、按需修改 settings_lobechat.conf 后再启动
 bash cli.sh init
 bash cli.sh start
 
@@ -57,13 +57,13 @@ bash cli.sh purge
 
 #### init
 
-生成 `settings.conf`；按需调用基础服务 `init` 准备 `settings_*.conf`。不启动容器。
+生成 `settings_lobechat.conf`；按需调用基础服务 `init` 准备 `settings_*.conf`。不启动容器。
 
 ```bash
 # 级联 init 依赖
-deploy_paradedb init --name "paradedb_${INSTANCE_NAME}"
-deploy_redis init --name "redis_${INSTANCE_NAME}"
-deploy_rustfs init --name "rustfs_${INSTANCE_NAME}"
+deploy_paradedb init --name "${INSTANCE_NAME}_paradedb"
+deploy_redis init --name "${INSTANCE_NAME}_redis"
+deploy_rustfs init --name "${INSTANCE_NAME}_rustfs"
 deploy_casdoor init
 ```
 
@@ -75,7 +75,7 @@ deploy_casdoor init
 # 启动依赖服务并接入网络
 docker network create "${INSTANCE_NAME}_net"
 deploy_paradedb start
-docker network connect "${INSTANCE_NAME}_net" "paradedb_${INSTANCE_NAME}"
+docker network connect "${INSTANCE_NAME}_net" "${INSTANCE_NAME}_paradedb"
 
 # 拉起 LobeChat 主体
 docker run -d \

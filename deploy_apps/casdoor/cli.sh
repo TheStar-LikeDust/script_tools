@@ -22,7 +22,7 @@ done
 # Anchor paths to this script's own location (cwd-independent, move-safe)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TPL_DIR="$SCRIPT_DIR/templates"
-CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings.conf}"
+CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_casdoor.conf}"
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 IMAGE="casbin/casdoor:latest"
 HOOK_RUN_ARGS=()   # filled by hooks.sh on_start; injected into docker run
@@ -51,7 +51,7 @@ require_conf() {
 # 3. Service Config Rendering
 # -----------------------------------------------------------------------------
 generate_settings() {
-    # --external is an init-only flag; it just records WITH_BUNDLED_DB in settings.conf
+    # --external is an init-only flag; it just records WITH_BUNDLED_DB in settings_casdoor.conf
     local with_db="true"
     for a in "${EXTRA_ARGS[@]}"; do [ "$a" = "--external" ] && with_db="false"; done
 
@@ -65,7 +65,7 @@ generate_settings() {
     sed -e "s/{{INSTANCE_NAME}}/${name}/g" \
         -e "s/{{CASDOOR_PORT}}/${port}/g" \
         -e "s/{{WITH_BUNDLED_DB}}/${with_db}/g" \
-        "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
+        "$TPL_DIR/settings_casdoor.conf.tpl" > "$CONF_FILE"
 }
 
 # -----------------------------------------------------------------------------
@@ -91,7 +91,7 @@ do_init() {
         echo "[INFO] Bundled paradedb config: settings_paradedb.conf (managed by deploy/paradedb)"
         echo "[INFO] Run 'bash cli.sh start' to bring up DB + Casdoor."
     else
-        echo "[IMPORTANT] External DB mode: fill EXT_DB_* in settings.conf, then 'bash cli.sh start'."
+        echo "[IMPORTANT] External DB mode: fill EXT_DB_* in settings_casdoor.conf, then 'bash cli.sh start'."
     fi
     hr
 }
@@ -184,7 +184,7 @@ do_reset() {
 
 do_help() {
     echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--external] [--conf PATH] [--name NAME]"
-    echo "  init        : Generate settings.conf (+ bundled paradedb) and render app.conf, without starting"
+    echo "  init        : Generate settings_casdoor.conf (+ bundled paradedb) and render app.conf, without starting"
     echo "  start       : Start bundled DB (if any) then the Casdoor container"
     echo "  up          : init + start"
     echo "  stop        : Stop Casdoor (and bundled DB)"
@@ -194,7 +194,7 @@ do_help() {
     echo "  network ls  : Show the app network and attached containers"
     echo ""
     echo "  --external  : (init/up only) Do NOT bundle paradedb; connect to an external DB"
-    echo "                configured via EXT_DB_* in settings.conf."
+    echo "                configured via EXT_DB_* in settings_casdoor.conf."
 }
 
 # -----------------------------------------------------------------------------

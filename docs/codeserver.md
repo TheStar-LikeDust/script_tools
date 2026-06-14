@@ -8,7 +8,7 @@
 
 ## 2. 核心配置项
 
-### settings.conf
+### settings_codeserver.conf
 
 - `SESSION_NAME`: Tmux 会话唯一名称，决定进程的隔离与管理（默认时间戳后缀，如 `codeserver_8421`）。
 - `HOST`: 监听 IP（默认 `127.0.0.1`，需公网访问可改为 `0.0.0.0`）。
@@ -27,7 +27,7 @@
 ```bash
 cd tools/codeserver
 
-# 常规分步拉起（推荐）：先生成配置、按需修改 settings.conf 后再启动
+# 常规分步拉起（推荐）：先生成配置、按需修改 settings_codeserver.conf 后再启动
 bash cli.sh init
 bash cli.sh start
 
@@ -43,7 +43,7 @@ bash cli.sh purge
 ## 5. 命令解释
 
 #### init
-生成 `settings.conf` 核心配置与相关的 `config.yaml` 文件；如缺失依赖将自动执行下载安装。
+生成 `settings_codeserver.conf` 核心配置与相关的 `config.yaml` 文件；如缺失依赖将自动执行下载安装。
 ```bash
 curl -fsSL https://code-server.dev/install.sh | sh
 ```

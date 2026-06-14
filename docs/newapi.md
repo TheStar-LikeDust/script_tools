@@ -8,7 +8,7 @@
 
 ## 2. 核心配置项
 
-### settings.conf
+### settings_newapi.conf
 
 - `INSTANCE_NAME`: 实例名（时间戳后缀，如 `newapi_8421`），决定容器名与数据目录。
 - `NEWAPI_PORT`: 对外暴露的 Web UI / API 端口（容器内 `3000`）。
@@ -26,7 +26,7 @@
 
 ## 3. 备注
 
-- 连接串注入机制：`SQL_DSN` 与 `REDIS_CONN_STRING` 不落盘在 `settings.conf`，而是每次 `start` 时从两份附带配置实时拼装（host 为依赖容器名、端口为容器内部端口），经 `-e` 注入容器。修改数据库凭证只需改 `settings_paradedb.conf` 后 `rm` 再 `start`。
+- 连接串注入机制：`SQL_DSN` 与 `REDIS_CONN_STRING` 不落盘在 `settings_newapi.conf`，而是每次 `start` 时从两份附带配置实时拼装（host 为依赖容器名、端口为容器内部端口），经 `-e` 注入容器。修改数据库凭证只需改 `settings_paradedb.conf` 后 `rm` 再 `start`。
 - 附带 redis 仅在专属隔离网络内被访问，未设密码；对外暴露的仅是 redis 自身 `settings_redis.conf` 中的随机宿主机端口，如需对外屏蔽可手动移除该端口映射。
 - 首次访问 Web UI 会引导设置管理员账号密码，仅首次安装需要。
 
@@ -35,7 +35,7 @@
 ```bash
 cd deploy_apps/newapi
 
-# 常规分步拉起（推荐）：先生成配置、按需修改 settings.conf 后再启动
+# 常规分步拉起（推荐）：先生成配置、按需修改 settings_newapi.conf 后再启动
 bash cli.sh init
 bash cli.sh start
 
@@ -56,22 +56,22 @@ bash cli.sh purge
 
 #### init
 
-生成 `settings.conf`（仅首次）；委托 paradedb 与 redis 生成 `settings_paradedb.conf` / `settings_redis.conf` 及各自数据目录，并预建 new-api 数据目录。不启动容器。
+生成 `settings_newapi.conf`（仅首次）；委托 paradedb 与 redis 生成 `settings_paradedb.conf` / `settings_redis.conf` 及各自数据目录，并预建 new-api 数据目录。不启动容器。
 
 ```bash
 # 1) new-api 自身配置（仅首次）
 sed -e "s/{{INSTANCE_NAME}}/newapi_<时间戳>/g" \
     -e "s/{{NEWAPI_PORT}}/<随机端口>/g" \
     -e "s/{{CRYPTO_SECRET}}/<随机密钥>/g" \
-    "$SCRIPT_DIR/templates/settings.conf.tpl" > settings.conf
+    "$SCRIPT_DIR/templates/settings_newapi.conf.tpl" > settings_newapi.conf
 
 # 2) 委托 paradedb 与 redis——配置与数据都落在 newapi 目录
 bash ../../deploy/paradedb/cli.sh init \
     --conf "$CONF_DIR/settings_paradedb.conf" \
-    --name "paradedb_newapi_<时间戳>"
+    --name "newapi_<时间戳>_paradedb"
 bash ../../deploy/redis/cli.sh init \
     --conf "$CONF_DIR/settings_redis.conf" \
-    --name "redis_newapi_<时间戳>"
+    --name "newapi_<时间戳>_redis"
 ```
 
 #### start
@@ -83,16 +83,16 @@ bash ../../deploy/redis/cli.sh init \
 docker network inspect "${INSTANCE_NAME}_net" >/dev/null 2>&1 || docker network create "${INSTANCE_NAME}_net"
 bash ../../deploy/paradedb/cli.sh start --conf "$CONF_DIR/settings_paradedb.conf"
 bash ../../deploy/redis/cli.sh start --conf "$CONF_DIR/settings_redis.conf"
-docker network connect "${INSTANCE_NAME}_net" "paradedb_${INSTANCE_NAME}"
-docker network connect "${INSTANCE_NAME}_net" "redis_${INSTANCE_NAME}"
+docker network connect "${INSTANCE_NAME}_net" "${INSTANCE_NAME}_paradedb"
+docker network connect "${INSTANCE_NAME}_net" "${INSTANCE_NAME}_redis"
 
 # 起 new-api（已存在则仅 docker start）
 docker run -d \
     --name "${INSTANCE_NAME}" \
     --network "${INSTANCE_NAME}_net" \
     -p "${NEWAPI_PORT}:3000" \
-    -e SQL_DSN="postgresql://postgres:<随机密码>@paradedb_${INSTANCE_NAME}:5432/postgres" \
-    -e REDIS_CONN_STRING="redis://redis_${INSTANCE_NAME}:6379" \
+    -e SQL_DSN="postgresql://postgres:<随机密码>@${INSTANCE_NAME}_paradedb:5432/postgres" \
+    -e REDIS_CONN_STRING="redis://${INSTANCE_NAME}_redis:6379" \
     -e TZ="Asia/Shanghai" \
     -e ERROR_LOG_ENABLED="true" \
     -e CRYPTO_SECRET="<随机密钥>" \

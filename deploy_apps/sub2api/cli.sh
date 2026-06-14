@@ -22,7 +22,7 @@ done
 # Anchor paths to this script's own location (cwd-independent, move-safe)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TPL_DIR="$SCRIPT_DIR/templates"
-CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings.conf}"
+CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_sub2api.conf}"
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 IMAGE="weishaw/sub2api:latest"
 HOOK_RUN_ARGS=()   # filled by hooks.sh on_start; injected into docker run
@@ -68,7 +68,7 @@ generate_settings() {
         -e "s/{{ADMIN_PASSWORD}}/${admin_pass}/g" \
         -e "s/{{JWT_SECRET}}/${jwt_secret}/g" \
         -e "s/{{TOTP_ENCRYPTION_KEY}}/${totp_key}/g" \
-        "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
+        "$TPL_DIR/settings_sub2api.conf.tpl" > "$CONF_FILE"
 }
 
 # -----------------------------------------------------------------------------
@@ -242,7 +242,7 @@ do_reset() {
 
 do_help() {
     echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME]"
-    echo "  init        : Generate settings.conf (+ bundled paradedb/redis configs), without starting"
+    echo "  init        : Generate settings_sub2api.conf (+ bundled paradedb/redis configs), without starting"
     echo "  start       : Start bundled DB + Redis, then the Sub2API container"
     echo "  up          : init + start"
     echo "  stop        : Stop Sub2API (and bundled deps)"

@@ -10,7 +10,7 @@ CASDOOR_CLI="$SCRIPT_DIR/../casdoor/cli.sh"
 PG_CONF="$CONF_DIR/settings_paradedb.conf"
 REDIS_CONF="$CONF_DIR/settings_redis.conf"
 RUSTFS_CONF="$CONF_DIR/settings_rustfs.conf"
-CASDOOR_CONF="$CONF_DIR/../casdoor/settings.conf"
+CASDOOR_CONF="$CONF_DIR/../casdoor/settings_casdoor.conf"
 
 deploy_paradedb() { local sub="$1"; shift; bash "$PARADEDB_CLI" "$sub" --conf "$PG_CONF" "$@"; }
 deploy_redis()    { local sub="$1"; shift; bash "$REDIS_CLI" "$sub" --conf "$REDIS_CONF" "$@"; }
@@ -32,9 +32,9 @@ wait_pg() {
 }
 
 on_init() {
-    if [ "$USE_INTERNAL_DB" = "true" ]; then deploy_paradedb init --name "paradedb_${INSTANCE_NAME}" >/dev/null; fi
-    if [ "$USE_INTERNAL_REDIS" = "true" ]; then deploy_redis init --name "redis_${INSTANCE_NAME}" >/dev/null; fi
-    if [ "$USE_INTERNAL_S3" = "true" ]; then deploy_rustfs init --name "rustfs_${INSTANCE_NAME}" >/dev/null; fi
+    if [ "$USE_INTERNAL_DB" = "true" ]; then deploy_paradedb init --name "${INSTANCE_NAME}_paradedb" >/dev/null; fi
+    if [ "$USE_INTERNAL_REDIS" = "true" ]; then deploy_redis init --name "${INSTANCE_NAME}_redis" >/dev/null; fi
+    if [ "$USE_INTERNAL_S3" = "true" ]; then deploy_rustfs init --name "${INSTANCE_NAME}_rustfs" >/dev/null; fi
     if [ "$USE_INTERNAL_CASDOOR" = "true" ]; then deploy_casdoor init >/dev/null; fi
 }
 
@@ -45,16 +45,16 @@ on_start() {
     echo "[INFO] Starting bundled base services and attaching to ${net}..."
     if [ "$USE_INTERNAL_DB" = "true" ]; then
         deploy_paradedb start
-        net_connect "$net" "paradedb_${INSTANCE_NAME}"
-        wait_pg "paradedb_${INSTANCE_NAME}"
+        net_connect "$net" "${INSTANCE_NAME}_paradedb"
+        wait_pg "${INSTANCE_NAME}_paradedb"
     fi
     if [ "$USE_INTERNAL_REDIS" = "true" ]; then
         deploy_redis start
-        net_connect "$net" "redis_${INSTANCE_NAME}"
+        net_connect "$net" "${INSTANCE_NAME}_redis"
     fi
     if [ "$USE_INTERNAL_S3" = "true" ]; then
         deploy_rustfs start
-        net_connect "$net" "rustfs_${INSTANCE_NAME}"
+        net_connect "$net" "${INSTANCE_NAME}_rustfs"
     fi
     if [ "$USE_INTERNAL_CASDOOR" = "true" ]; then
         deploy_casdoor start

@@ -8,7 +8,7 @@
 
 ## 2. 核心配置项
 
-### settings.conf
+### settings_rustfs.conf
 
 - `INSTANCE_NAME`: 实例名（时间戳后缀，如 `rustfs_8421`），决定容器名与数据目录。
 - `RUSTFS_PORT`: S3 API 对宿主机暴露的端口（容器内为 `9000`）。
@@ -25,7 +25,7 @@
 ```bash
 cd deploy/rustfs
 
-# 常规分步拉起（推荐）：先生成配置、按需修改 settings.conf 后再启动
+# 常规分步拉起（推荐）：先生成配置、按需修改 settings_rustfs.conf 后再启动
 bash cli.sh init
 bash cli.sh start
 
@@ -54,7 +54,7 @@ sed -e "s/{{INSTANCE_NAME}}/<--name 或 rustfs_时间戳>/g" \
     -e "s/{{RUSTFS_ADMIN_PORT}}/<随机端口>/g" \
     -e "s/{{RUSTFS_ACCESS_KEY}}/<随机密钥>/g" \
     -e "s/{{RUSTFS_SECRET_KEY}}/<随机密钥>/g" \
-    "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
+    "$TPL_DIR/settings_rustfs.conf.tpl" > "$CONF_FILE"
 
 mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data"
 ```
@@ -95,7 +95,7 @@ docker stop "${INSTANCE_NAME}"
 
 #### rm
 
-删除容器，保留 `./data/` 与 `settings.conf`。
+删除容器，保留 `./data/` 与 `settings_rustfs.conf`。
 
 ```bash
 docker stop "${INSTANCE_NAME}"
@@ -104,7 +104,7 @@ docker rm "${INSTANCE_NAME}"
 
 #### purge
 
-删除容器并删除本地数据目录，保留 `settings.conf`。
+删除容器并删除本地数据目录，保留 `settings_rustfs.conf`。
 
 ```bash
 docker stop "${INSTANCE_NAME}"

@@ -22,7 +22,7 @@ done
 # Anchor paths to this script's own location (cwd-independent, move-safe)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TPL_DIR="$SCRIPT_DIR/templates"
-CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings.conf}"
+CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_newapi.conf}"
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 IMAGE="calciumion/new-api:latest"
 HOOK_RUN_ARGS=()   # filled by hooks.sh on_start; injected into docker run
@@ -63,7 +63,7 @@ generate_settings() {
     sed -e "s/{{INSTANCE_NAME}}/${name}/g" \
         -e "s/{{NEWAPI_PORT}}/${port}/g" \
         -e "s/{{CRYPTO_SECRET}}/${secret}/g" \
-        "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
+        "$TPL_DIR/settings_newapi.conf.tpl" > "$CONF_FILE"
 }
 
 # -----------------------------------------------------------------------------
@@ -187,7 +187,7 @@ do_reset() {
 
 do_help() {
     echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME]"
-    echo "  init        : Generate settings.conf (+ bundled paradedb/redis configs), without starting"
+    echo "  init        : Generate settings_newapi.conf (+ bundled paradedb/redis configs), without starting"
     echo "  start       : Start bundled DB + Redis, then the New API container"
     echo "  up          : init + start"
     echo "  stop        : Stop New API (and bundled deps)"

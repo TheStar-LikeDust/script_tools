@@ -4,7 +4,7 @@
 
 > 宿主机级别的 Docker 全局治理工具，当前负责安装并启用 ufw-docker，让 UFW 能够管控 Docker 发布的端口。
 
-该服务直接作用于宿主物理机，非容器化，无 `settings.conf` 与数据目录。默认情况下 Docker 通过 `-p` 发布的端口会绕过 UFW（其规则写入 iptables 的 `DOCKER` 链，先于 UFW 的 `INPUT` 链生效）；启用 ufw-docker 后，Docker 发布端口默认不再对公网开放，需经 `ufw-docker allow` 显式放行。作为后续 Docker 宿主机治理脚本的聚合入口，可逐步扩展更多全局配置。
+该服务直接作用于宿主物理机，非容器化，无 `settings_<服务名>.conf` 与数据目录。默认情况下 Docker 通过 `-p` 发布的端口会绕过 UFW（其规则写入 iptables 的 `DOCKER` 链，先于 UFW 的 `INPUT` 链生效）；启用 ufw-docker 后，Docker 发布端口默认不再对公网开放，需经 `ufw-docker allow` 显式放行。作为后续 Docker 宿主机治理脚本的聚合入口，可逐步扩展更多全局配置。
 
 ## 2. 核心配置项
 

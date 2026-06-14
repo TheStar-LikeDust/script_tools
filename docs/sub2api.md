@@ -8,7 +8,7 @@
 
 ## 2. 核心配置项
 
-### settings.conf
+### settings_sub2api.conf
 
 - `INSTANCE_NAME`: 实例名（时间戳后缀，如 `sub2api_8421`），决定容器名与数据目录。
 - `SUB2API_PORT`: 对外暴露的 Web UI / API 端口（容器内 `8080`）。
@@ -38,7 +38,7 @@
 
 ## 3. 备注
 
-- 连接信息注入机制：`DATABASE_HOST/USER/PASSWORD/DBNAME` 与 `REDIS_HOST` 不落盘在 `settings.conf`，而是每次 `start` 时从两份附带配置实时读取（host 为依赖容器名、端口为容器内部端口），经 `-e` 注入容器。修改数据库凭证只需改 `settings_paradedb.conf` 后 `rm` 再 `start`。
+- 连接信息注入机制：`DATABASE_HOST/USER/PASSWORD/DBNAME` 与 `REDIS_HOST` 不落盘在 `settings_sub2api.conf`，而是每次 `start` 时从两份附带配置实时读取（host 为依赖容器名、端口为容器内部端口），经 `-e` 注入容器。修改数据库凭证只需改 `settings_paradedb.conf` 后 `rm` 再 `start`。
 - 附带 redis 仅在专属隔离网络内被访问，未设密码；对外暴露的仅是 redis 自身 `settings_redis.conf` 中的随机宿主机端口，如需对外屏蔽可手动移除该端口映射。
 - 数据库复用项目的 `deploy/paradedb`（PostgreSQL 兼容），默认库与用户均为 `postgres`，`DATABASE_SSLMODE` 固定 `disable`。
 - 容器以 `--ulimit nofile=100000:100000` 提升文件句柄上限，适配网关的高并发连接。
@@ -49,7 +49,7 @@
 ```bash
 cd deploy_apps/sub2api
 
-# 常规分步拉起（推荐）：先生成配置、按需修改 settings.conf 后再启动
+# 常规分步拉起（推荐）：先生成配置、按需修改 settings_sub2api.conf 后再启动
 bash cli.sh init
 bash cli.sh start
 
@@ -70,7 +70,7 @@ bash cli.sh purge
 
 #### init
 
-生成 `settings.conf`（仅首次）；委托 paradedb 与 redis 生成 `settings_paradedb.conf` / `settings_redis.conf` 及各自数据目录，并预建 sub2api 数据目录。不启动容器。
+生成 `settings_sub2api.conf`（仅首次）；委托 paradedb 与 redis 生成 `settings_paradedb.conf` / `settings_redis.conf` 及各自数据目录，并预建 sub2api 数据目录。不启动容器。
 
 ```bash
 # 1) sub2api 自身配置（仅首次）
@@ -79,15 +79,15 @@ sed -e "s/{{INSTANCE_NAME}}/sub2api_<时间戳>/g" \
     -e "s/{{ADMIN_PASSWORD}}/<随机密码>/g" \
     -e "s/{{JWT_SECRET}}/<随机密钥>/g" \
     -e "s/{{TOTP_ENCRYPTION_KEY}}/<随机密钥>/g" \
-    "$SCRIPT_DIR/templates/settings.conf.tpl" > settings.conf
+    "$SCRIPT_DIR/templates/settings_sub2api.conf.tpl" > settings_sub2api.conf
 
 # 2) 委托 paradedb 与 redis——配置与数据都落在 sub2api 目录
 bash ../../deploy/paradedb/cli.sh init \
     --conf "$CONF_DIR/settings_paradedb.conf" \
-    --name "paradedb_sub2api_<时间戳>"
+    --name "sub2api_<时间戳>_paradedb"
 bash ../../deploy/redis/cli.sh init \
     --conf "$CONF_DIR/settings_redis.conf" \
-    --name "redis_sub2api_<时间戳>"
+    --name "sub2api_<时间戳>_redis"
 ```
 
 #### start
@@ -99,8 +99,8 @@ bash ../../deploy/redis/cli.sh init \
 docker network inspect "${INSTANCE_NAME}_net" >/dev/null 2>&1 || docker network create "${INSTANCE_NAME}_net"
 bash ../../deploy/paradedb/cli.sh start --conf "$CONF_DIR/settings_paradedb.conf"
 bash ../../deploy/redis/cli.sh start --conf "$CONF_DIR/settings_redis.conf"
-docker network connect "${INSTANCE_NAME}_net" "paradedb_${INSTANCE_NAME}"
-docker network connect "${INSTANCE_NAME}_net" "redis_${INSTANCE_NAME}"
+docker network connect "${INSTANCE_NAME}_net" "${INSTANCE_NAME}_paradedb"
+docker network connect "${INSTANCE_NAME}_net" "${INSTANCE_NAME}_redis"
 
 # 起 sub2api（已存在则仅 docker start）
 docker run -d \
@@ -111,14 +111,14 @@ docker run -d \
     -v "$CONF_DIR/data/${INSTANCE_NAME}_data:/app/data" \
     -e AUTO_SETUP="true" \
     -e SERVER_HOST="0.0.0.0" -e SERVER_PORT="8080" \
-    -e DATABASE_HOST="paradedb_${INSTANCE_NAME}" -e DATABASE_PORT="5432" \
+    -e DATABASE_HOST="${INSTANCE_NAME}_paradedb" -e DATABASE_PORT="5432" \
     -e DATABASE_USER="postgres" -e DATABASE_PASSWORD="<随机密码>" \
     -e DATABASE_DBNAME="postgres" -e DATABASE_SSLMODE="disable" \
-    -e REDIS_HOST="redis_${INSTANCE_NAME}" -e REDIS_PORT="6379" \
+    -e REDIS_HOST="${INSTANCE_NAME}_redis" -e REDIS_PORT="6379" \
     -e ADMIN_EMAIL="admin@sub2api.local" -e ADMIN_PASSWORD="<随机密码>" \
     -e JWT_SECRET="<随机密钥>" -e TOTP_ENCRYPTION_KEY="<随机密钥>" \
     -e TZ="Asia/Shanghai" \
-    # ... 其余 settings.conf 中的可选参数经 -e 透传 ...
+    # ... 其余 settings_sub2api.conf 中的可选参数经 -e 透传 ...
     --health-cmd "wget -q -T 5 -O /dev/null http://localhost:8080/health || exit 1" \
     --restart unless-stopped \
     weishaw/sub2api:latest
@@ -173,5 +173,5 @@ docker network rm "${INSTANCE_NAME}_net"
 
 - 镜像版本：当前固定 `weishaw/sub2api:latest`，需可复现可锁定具体标签。
 - 数据库选型：官方 compose 使用 `postgres:18-alpine`，本项目复用 `deploy/paradedb`（PostgreSQL 兼容）以统一依赖；如需严格对齐官方镜像，可另行替换底层依赖。
-- 环境变量：`settings.conf` 收录了较完整的可选项（Gemini OAuth、URL 白名单、网关并发等），默认值与官方 compose 一致，无需即可保持默认。
+- 环境变量：`settings_sub2api.conf` 收录了较完整的可选项（Gemini OAuth、URL 白名单、网关并发等），默认值与官方 compose 一致，无需即可保持默认。
 - 依赖 repo 结构：通过相对路径 `../../deploy/paradedb`、`../../deploy/redis` 与 `../../lib/network.sh` 定位共享脚本；sub2api 目录里的配置与数据是可随目录迁移的资产，整体搬迁请连同 repo 一起。

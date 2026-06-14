@@ -47,8 +47,8 @@ wait_pg() {
 # Lifecycle hooks (called by cli.sh)
 # -----------------------------------------------------------------------------
 on_init() {
-    deploy_paradedb init --name "paradedb_${INSTANCE_NAME}"
-    deploy_redis init --name "redis_${INSTANCE_NAME}"
+    deploy_paradedb init --name "${INSTANCE_NAME}_paradedb"
+    deploy_redis init --name "${INSTANCE_NAME}_redis"
 }
 
 # Bring up bundled deps, attach them to the app network, wait for DB health,

@@ -52,13 +52,13 @@ cd deploy/paradedb
 
 **方式 1：标准部署（推荐，支持自定义配置）**
 
-首先，仅生成默认配置 `settings.conf`（单容器服务用原生 `docker run`，不再渲染 `compose.yml`）：
+首先，仅生成默认配置 `settings_paradedb.conf`（单容器服务用原生 `docker run`，不再渲染 `compose.yml`）：
 
 ```bash
 bash cli.sh init
 ```
 
-你可以随时打开 `settings.conf` 修改随机生成的端口、密码或 `INSTANCE_NAME`（修改名字可实现同机器多实例）。确认无误后，启动服务：
+你可以随时打开 `settings_paradedb.conf` 修改随机生成的端口、密码或 `INSTANCE_NAME`（修改名字可实现同机器多实例）。确认无误后，启动服务：
 
 ```bash
 bash cli.sh start
@@ -71,10 +71,10 @@ bash cli.sh up
 ```
 
 **发生了什么？**
-1. 在执行 `init` 时，脚本会自动生成 `settings.conf`，里面包含了随机分配的端口和默认的 `INSTANCE_NAME`，并预建数据目录 `./data/<INSTANCE_NAME>_data`。实例名采用 **时间戳后缀** 规则：独立部署时为 `<服务名>_<4位时间戳>`（例如 `paradedb_8421`）。
-2. 执行 `start` 时，`cli.sh` 先 `source settings.conf`，再用原生 `docker run` 直接拉起隔离的容器（容器名等于 `INSTANCE_NAME`，如 `paradedb_8421`；数据保存在 `./data/<INSTANCE_NAME>_data`，如 `./data/paradedb_8421_data`）。
+1. 在执行 `init` 时，脚本会自动生成 `settings_paradedb.conf`，里面包含了随机分配的端口和默认的 `INSTANCE_NAME`，并预建数据目录 `./data/<INSTANCE_NAME>_data`。实例名采用 **时间戳后缀** 规则：独立部署时为 `<服务名>_<4位时间戳>`（例如 `paradedb_8421`）。
+2. 执行 `start` 时，`cli.sh` 先 `source settings_paradedb.conf`，再用原生 `docker run` 直接拉起隔离的容器（容器名等于 `INSTANCE_NAME`，如 `paradedb_8421`；数据保存在 `./data/<INSTANCE_NAME>_data`，如 `./data/paradedb_8421_data`）。
 
-如果后续需要防端口冲突或起第二个库，只需修改 `settings.conf` 里的 `INSTANCE_NAME`/端口等参数，再执行 `bash cli.sh rm && bash cli.sh start` 重建生效（数据在 `./data` 卷里，不会丢）。
+如果后续需要防端口冲突或起第二个库，只需修改 `settings_paradedb.conf` 里的 `INSTANCE_NAME`/端口等参数，再执行 `bash cli.sh rm && bash cli.sh start` 重建生效（数据在 `./data` 卷里，不会丢）。
 
 ### 场景二：一键部署全栈业务 (以 New API 为例)
 
@@ -92,7 +92,7 @@ cd deploy_apps/newapi
 bash cli.sh init
 ```
 
-此时会在 newapi 目录下生成三份配置：`settings.conf`（New API 自身的端口与实例名）、`settings_paradedb.conf` 和 `settings_redis.conf`（两个附带依赖的凭证与端口）。按需检查修改后，执行全栈启动：
+此时会在 newapi 目录下生成三份配置：`settings_newapi.conf`（New API 自身的端口与实例名）、`settings_paradedb.conf` 和 `settings_redis.conf`（两个附带依赖的凭证与端口）。按需检查修改后，执行全栈启动：
 
 ```bash
 bash cli.sh start
@@ -107,7 +107,7 @@ bash cli.sh up
 ```
 
 **发生了什么？**
-- **委托式级联**：控制器调用各基础服务自己的 `cli.sh --conf settings_X.conf --name X_<实例名>`，把依赖的配置与数据都安置在 newapi 目录下；实例名如 `paradedb_newapi_8421`、`redis_newapi_8421`。
+- **委托式级联**：控制器调用各基础服务自己的 `cli.sh --conf settings_X.conf --name <实例名>_X`，把依赖的配置与数据都安置在 newapi 目录下；实例名如 `newapi_8421_paradedb`、`newapi_8421_redis`。
 - **连接串实时拼装**：`SQL_DSN` 与 `REDIS_CONN_STRING` 不落盘，每次 `start` 时从两份附带配置实时读取拼装（host 为依赖容器名），经 `-e` 注入 New API 容器。
 - **app 级组网**：`start` 时建一个 user-defined network `<实例名>_net`，把 ParadeDB、Redis 与 New API 容器接入，按名互通；全程纯 `docker run`，不依赖 docker compose。
 
@@ -121,9 +121,9 @@ bash cli.sh up
 ```
 
 **发生了什么？**
-1. `init` 生成 `settings.conf`（随机端口、随机密钥、时间戳实例名），并预建数据目录 `./data/<INSTANCE_NAME>_data`，不渲染 `compose.yml`。
-2. `start` 时 `cli.sh` 先 `source settings.conf`，再用 `docker run` 直接拉起容器，把配置通过 `-e VAR` 透传进去。
-3. 修改 `settings.conf` 后，需先 `bash cli.sh rm` 再 `bash cli.sh start` 重建生效（数据在 `./data` 卷里，不会丢）。
+1. `init` 生成 `settings_openwebui.conf`（随机端口、随机密钥、时间戳实例名），并预建数据目录 `./data/<INSTANCE_NAME>_data`，不渲染 `compose.yml`。
+2. `start` 时 `cli.sh` 先 `source settings_openwebui.conf`，再用 `docker run` 直接拉起容器，把配置通过 `-e VAR` 透传进去。
+3. 修改 `settings_openwebui.conf` 后，需先 `bash cli.sh rm` 再 `bash cli.sh start` 重建生效（数据在 `./data` 卷里，不会丢）。
 
 ## 常用管理命令
 
@@ -154,38 +154,27 @@ bash cli.sh stop
 bash cli.sh rm
 ```
 
-**【危险】**销毁容器并彻底清除对应的 `./data` 数据卷（但保留 settings.conf 配置）：
+**【危险】**销毁容器并彻底清除对应的 `./data` 数据卷（但保留 settings_<服务名>.conf 配置）：
 ```bash
 bash cli.sh purge
 ```
 
 > 容器数据多由内部 root 进程写入，宿主机普通用户直接删会因属主权限失败。为此 docker 服务的 `purge` 会借一个一次性 root 容器来删除数据目录，无需 `sudo` 也能彻底清干净；删除失败会显式报错，不会假装成功。
 
-**【危险·最强】**彻底重置：在 `purge` 基础上再删除该服务目录下所有 settings（`settings.conf` 及 `settings_*.conf` 等），把目录还原成 `git clone` 时的纯源文件态：
+**【危险·最强】**彻底重置：在 `purge` 基础上再删除该服务目录下所有 settings（`settings_<服务名>.conf` 及 `settings_*.conf` 等），把目录还原成 `git clone` 时的纯源文件态：
 ```bash
 bash cli.sh reset
 ```
 
-> 破坏力阶梯为 `rm` → `purge` → `reset`。`reset` 会一并删掉含随机密钥的 `settings.conf`，且为复合服务清空附带依赖的全部生成配置；执行后需重新 `init` 才能再次启动。
+> 破坏力阶梯为 `rm` → `purge` → `reset`。`reset` 会一并删掉含随机密钥的 `settings_<服务名>.conf`，且为复合服务清空附带依赖的全部生成配置；执行后需重新 `init` 才能再次启动。
 
 查看容器运行状态（`status` 命令已移除，直接用原生 docker）：
 ```bash
 docker ps -a --filter name=<INSTANCE_NAME>
 ```
 
-## 已知 TODO / 待优化
+## 已知 TODO / 个人待优化的清单
 
-### 各 `cli.sh` 重复样板代码（与"目录即服务"冲突，待定方案）
+### 项目目录整体比较乱
 
-当前每个服务目录的 `cli.sh` 仍重复实现了一致的样板：`random_port` / `stop` / `rm` / `purge` / `case` 派发 / `do_help`，连 `random_secret` 长度都各写各的。这违反 DRY，但抽公共库又会破坏"拷贝单个目录即带走全部资产"的核心理念。
-
-已落地的拆分（见 `docs/design/command.md` 第 2 节）：
-- **`hooks.sh`（服务级）**：复合服务的级联依赖、附属配置渲染与组网下沉到同目录可选的 `hooks.sh`，由 `cli.sh` 在生命周期点被动回调 `on_*` 钩子。
-- **`lib/network.sh`（项目级共享库）**：跨服务复用的容器网络能力抽到根级 `lib/`，由用到它的 `hooks.sh` 经相对路径 `source`；约定不注入服务目录。`.gitignore` 已为 `lib/` 加例外以避开 Python 打包规则的误伤。
-
-仍未决策的是 `cli.sh` 骨架自身的样板复用，候选方案：
-- **方案 A（现状）**：保留重复，换取目录自包含。维护成本高。
-- **方案 B（根级共享库）**：新增 `lib/common.sh`，各 `cli.sh` 通过相对路径 `source`。代价：单目录拷贝会丢失 lib，破坏自包含。
-- **方案 C（init 时注入）**：各 `cli.sh` 的 `init` 把 `lib/common.sh` 拷贝进当前目录，兼顾 DRY 与自包含，但引入"生成物"的同步复杂度。
-
-倾向方案 C，待确认后实施。
+### 容器/网络/数据目录命名不统一

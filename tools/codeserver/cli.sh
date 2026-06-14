@@ -22,7 +22,7 @@ done
 # Anchor paths to this script's own location so it works from any cwd and survives moves
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TPL_DIR="$SCRIPT_DIR/templates"
-CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings.conf}"
+CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_codeserver.conf}"
 # Config + data live together; data dir is derived from the config file's directory at runtime
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 
@@ -51,7 +51,7 @@ generate_settings() {
 
     sed -e "s/codeserver_XXXX/${name}/g" \
         -e "s/{{PASSWORD}}/${pass}/g" \
-        "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
+        "$TPL_DIR/settings_codeserver.conf.tpl" > "$CONF_FILE"
 }
 
 generate_yaml() {
@@ -93,7 +93,7 @@ do_init() {
     echo "[SUCCESS] [Code-Server] Initialization completed!"
     hr
     echo "[IMPORTANT] Recommended next steps:"
-    echo "  1. Review settings.conf (port / credentials)"
+    echo "  1. Review settings_codeserver.conf (port / credentials)"
     echo "  2. Run 'bash cli.sh start' to start code-server in background via tmux"
     hr
 }
@@ -118,7 +118,7 @@ do_start() {
     
     mkdir -p "$abs_config_dir" "$abs_user_data_dir"
     
-    # Generate config.yaml based on settings.conf
+    # Generate config.yaml based on settings_codeserver.conf
     generate_yaml
     
     hr
@@ -193,16 +193,16 @@ do_reset() {
 
 do_help() {
     echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME]"
-    echo "  init    : Generate settings.conf and config.yaml, install code-server if absent"
+    echo "  init    : Generate settings_codeserver.conf and config.yaml, install code-server if absent"
     echo "  start   : Start code-server in the background using tmux"
     echo "  up      : Initialize config and start the service instantly"
     echo "  stop    : Stop the running tmux session"
     echo "  rm      : Equivalent to stop for host-level tools"
-    echo "  purge   : DANGER - Stop session AND permanently delete ./data (Preserves settings.conf)"
+    echo "  purge   : DANGER - Stop session AND permanently delete ./data (Preserves settings_codeserver.conf)"
     echo "  reset   : DANGER - purge AND delete ALL settings (back to pristine source files)"
     echo ""
     echo "Options (for embedding as a sub-service under another app):"
-    echo "  --conf PATH : Config file location (default: <script_dir>/settings.conf)."
+    echo "  --conf PATH : Config file location (default: <script_dir>/settings_codeserver.conf)."
     echo "                Data dir is derived as <dir-of-conf>/data/..."
     echo "  --name NAME : Full session name to write at init (default: auto 'codeserver_<ts>')."
 }

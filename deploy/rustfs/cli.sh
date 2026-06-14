@@ -20,7 +20,7 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TPL_DIR="$SCRIPT_DIR/templates"
-CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings.conf}"
+CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_rustfs.conf}"
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 IMAGE="rustfs/rustfs:latest"
 HOOK_RUN_ARGS=()
@@ -63,7 +63,7 @@ generate_settings() {
         -e "s/{{RUSTFS_ADMIN_PORT}}/${admin_port}/g" \
         -e "s/{{RUSTFS_ACCESS_KEY}}/${access_key}/g" \
         -e "s/{{RUSTFS_SECRET_KEY}}/${secret_key}/g" \
-        "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
+        "$TPL_DIR/settings_rustfs.conf.tpl" > "$CONF_FILE"
 }
 
 # -----------------------------------------------------------------------------
@@ -85,9 +85,9 @@ do_init() {
     echo "[SUCCESS] [RustFS] Initialization completed!"
     hr
     echo "[IMPORTANT] Recommended next steps:"
-    echo "  1. Review settings.conf (ports / access key / secret key)"
+    echo "  1. Review settings_rustfs.conf (ports / access key / secret key)"
     echo "  2. Run 'bash cli.sh start' to bring up the service"
-    echo "Note: managed via plain 'docker run'; settings.conf is the single config source."
+    echo "Note: managed via plain 'docker run'; settings_rustfs.conf is the single config source."
     hr
 }
 
@@ -189,16 +189,16 @@ do_reset() {
 
 do_help() {
     echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME]"
-    echo "  init    : Generate settings.conf and create data dir, without starting"
+    echo "  init    : Generate settings_rustfs.conf and create data dir, without starting"
     echo "  start   : Start the container (run if absent, otherwise just start it)"
     echo "  up      : Initialize config and start the container instantly"
     echo "  stop    : Stop the running container"
-    echo "  rm      : Remove the container (Preserves ./data and settings.conf)"
-    echo "  purge   : DANGER - Remove container AND permanently delete ./data (Preserves settings.conf)"
+    echo "  rm      : Remove the container (Preserves ./data and settings_rustfs.conf)"
+    echo "  purge   : DANGER - Remove container AND permanently delete ./data (Preserves settings_rustfs.conf)"
     echo "  reset   : DANGER - purge AND delete ALL settings (back to pristine source files)"
     echo ""
     echo "Options (for embedding as a sub-service under another app):"
-    echo "  --conf PATH : Config file location (default: <script_dir>/settings.conf)."
+    echo "  --conf PATH : Config file location (default: <script_dir>/settings_rustfs.conf)."
     echo "                Data dir is derived as <dir-of-conf>/data/<INSTANCE_NAME>_data."
     echo "  --name NAME : Full instance name to write at init (default: auto 'rustfs_<ts>')."
 }

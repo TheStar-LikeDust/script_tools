@@ -29,7 +29,7 @@ pg_val() {
     esac )
 }
 
-# Render config/app.conf from current settings.conf (+ bundled DB config when applicable)
+# Render config/app.conf from current settings_casdoor.conf (+ bundled DB config when applicable)
 render_app_conf() {
     local db_host db_port db_user db_pass db_bootstrap
     if [ "$WITH_BUNDLED_DB" = "true" ]; then
@@ -69,7 +69,7 @@ wait_pg() {
 # -----------------------------------------------------------------------------
 on_init() {
     if [ "$WITH_BUNDLED_DB" = "true" ]; then
-        deploy_paradedb init --name "paradedb_${INSTANCE_NAME}"
+        deploy_paradedb init --name "${INSTANCE_NAME}_paradedb"
     fi
     render_app_conf
 }

@@ -20,7 +20,7 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TPL_DIR="$SCRIPT_DIR/templates"
-CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings.conf}"
+CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_nginx.conf}"
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 CONFD_DIR="/etc/nginx/conf.d"
 # Writing into /etc/nginx and ufw needs root; fall back to sudo for non-root callers
@@ -41,7 +41,7 @@ generate_settings() {
         name="nginx_${ts: -4}"
     fi
     sed -e "s/nginx_XXXX/${name}/g" \
-        "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
+        "$TPL_DIR/settings_nginx.conf.tpl" > "$CONF_FILE"
 }
 
 # Render the nginx server block into the service's own data dir (sandbox-friendly).
@@ -64,7 +64,7 @@ render_site() {
 do_start() {
     if [ ! -f "$CONF_FILE" ]; then
         hr
-        echo "[INFO] [Nginx] settings.conf not found, generating defaults..."
+        echo "[INFO] [Nginx] settings_nginx.conf not found, generating defaults..."
         generate_settings
         hr
         echo "[IMPORTANT] Review $CONF_FILE then re-run 'start':"
@@ -127,13 +127,13 @@ do_stop() {
     fi
     $SUDO ufw delete allow "${LISTEN_PORT}/tcp" || true
     hr
-    echo "[SUCCESS] [Nginx] Gateway is down (settings.conf preserved)."
+    echo "[SUCCESS] [Nginx] Gateway is down (settings_nginx.conf preserved)."
     hr
 }
 
 do_help() {
     echo "Usage: $0 {start|stop} [--conf PATH] [--name NAME]"
-    echo "  start : Generate settings.conf on first run; render site, link into nginx conf.d,"
+    echo "  start : Generate settings_nginx.conf on first run; render site, link into nginx conf.d,"
     echo "          reload nginx, and 'ufw allow' the listen port"
     echo "  stop  : Remove the site from conf.d, reload nginx, and 'ufw delete allow' the port"
 }

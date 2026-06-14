@@ -4,11 +4,11 @@
 
 > 宿主机级别的反向代理网关，将上游应用仅按白名单路径前缀（默认 `/v1/`）暴露到公网，其余路径一律返回 404。
 
-该服务直接运行在宿主物理机上，非容器化；nginx 作为普通宿主机进程监听，受 UFW 正常管控。配置以渲染的站点文件软链进 `/etc/nginx/conf.d/` 的方式部署，`reload` 生效。`start` 首次运行自动生成 `settings.conf`，提示按需修改后重跑。管理后台不经公网暴露，经 SSH 端口转发访问上游应用的本机端口。
+该服务直接运行在宿主物理机上，非容器化；nginx 作为普通宿主机进程监听，受 UFW 正常管控。配置以渲染的站点文件软链进 `/etc/nginx/conf.d/` 的方式部署，`reload` 生效。`start` 首次运行自动生成 `settings_nginx.conf`，提示按需修改后重跑。管理后台不经公网暴露，经 SSH 端口转发访问上游应用的本机端口。
 
 ## 2. 核心配置项
 
-### settings.conf
+### settings_nginx.conf
 
 - `INSTANCE_NAME`: 实例名，决定 `/etc/nginx/conf.d/` 中的站点文件名（默认时间戳后缀，如 `nginx_8421`）。
 - `SERVER_NAME`: 公网主机名，`_` 匹配任意主机。
@@ -30,10 +30,10 @@
 ```bash
 cd tools/nginx
 
-# 首次运行生成 settings.conf（随后按需修改 SERVER_NAME / LISTEN_PORT / UPSTREAM_PORT / ALLOW_PREFIX）
+# 首次运行生成 settings_nginx.conf（随后按需修改 SERVER_NAME / LISTEN_PORT / UPSTREAM_PORT / ALLOW_PREFIX）
 bash cli.sh start
 
-# 修改 settings.conf 后再次运行以部署网关
+# 修改 settings_nginx.conf 后再次运行以部署网关
 bash cli.sh start
 
 # 下线网关
@@ -44,7 +44,7 @@ bash cli.sh stop
 
 #### start
 
-首次运行生成 `settings.conf` 并提示修改后退出；配置就绪后渲染站点、软链进 conf.d、校验并 `reload` nginx，最后 `ufw allow` 监听端口。缺失 nginx 时经 `apt-get` 安装。
+首次运行生成 `settings_nginx.conf` 并提示修改后退出；配置就绪后渲染站点、软链进 conf.d、校验并 `reload` nginx，最后 `ufw allow` 监听端口。缺失 nginx 时经 `apt-get` 安装。
 
 ```bash
 ln -sf "$site_file" "/etc/nginx/conf.d/${INSTANCE_NAME}.conf"
@@ -54,7 +54,7 @@ ufw allow "${LISTEN_PORT}/tcp"
 
 #### stop
 
-移除 conf.d 中的站点软链并 `reload` nginx，再 `ufw delete allow` 监听端口；保留 `settings.conf`。
+移除 conf.d 中的站点软链并 `reload` nginx，再 `ufw delete allow` 监听端口；保留 `settings_nginx.conf`。
 
 ```bash
 rm -f "/etc/nginx/conf.d/${INSTANCE_NAME}.conf"
@@ -66,4 +66,4 @@ ufw delete allow "${LISTEN_PORT}/tcp"
 
 - 命令集裁剪：仅保留 `start` 与 `stop`，配置生成折叠进 `start`，不实现 `init`/`up`/`rm`/`purge`/`reset`。
 - 管理访问：上游端口仅绑本机（或经 ufw-docker 对公网屏蔽），管理 UI 经 SSH 隧道访问，例如 `ssh -L ${UPSTREAM_PORT}:127.0.0.1:${UPSTREAM_PORT} <user>@<server>`。
-- TLS 扩展：HTTPS 作为本服务的后续可选维度（`settings.conf` 增加证书相关项、`site.conf.tpl` 条件渲染 `listen 443 ssl`），不另起服务。
+- TLS 扩展：HTTPS 作为本服务的后续可选维度（`settings_nginx.conf` 增加证书相关项、`site.conf.tpl` 条件渲染 `listen 443 ssl`），不另起服务。

@@ -8,7 +8,7 @@
 
 ## 2. 核心配置项
 
-### settings.conf
+### settings_paradedb.conf
 
 - `INSTANCE_NAME`: 实例名（时间戳后缀，如 `paradedb_8421`），决定容器名与数据目录。
 - `DB_PORT`: 暴露给宿主机的随机端口（容器内为 `5432`）。
@@ -25,7 +25,7 @@
 ```bash
 cd deploy/paradedb
 
-# 常规分步拉起（推荐）：先生成配置、按需修改 settings.conf 后再启动
+# 常规分步拉起（推荐）：先生成配置、按需修改 settings_paradedb.conf 后再启动
 bash cli.sh init
 bash cli.sh start
 
@@ -54,7 +54,7 @@ sed -e "s/{{INSTANCE_NAME}}/<--name 或 paradedb_时间戳>/g" \
     -e "s/{{DB_PASSWORD}}/<随机密码>/g" \
     -e "s/{{DB_USER}}/postgres/g" \
     -e "s/{{DB_NAME}}/postgres/g" \
-    "$SCRIPT_DIR/templates/settings.conf.tpl" > "$CONF_FILE"
+    "$SCRIPT_DIR/templates/settings_paradedb.conf.tpl" > "$CONF_FILE"
 
 mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data"
 ```
@@ -93,7 +93,7 @@ docker stop "${INSTANCE_NAME}"
 
 #### rm
 
-删除容器，保留 `./data/` 与 `settings.conf`。
+删除容器，保留 `./data/` 与 `settings_paradedb.conf`。
 
 ```bash
 docker stop "${INSTANCE_NAME}"
@@ -102,7 +102,7 @@ docker rm "${INSTANCE_NAME}"
 
 #### purge
 
-删除容器并删除本地数据目录，保留 `settings.conf`。
+删除容器并删除本地数据目录，保留 `settings_paradedb.conf`。
 
 ```bash
 docker stop "${INSTANCE_NAME}"

@@ -8,7 +8,7 @@
 
 ## 2. 核心配置项
 
-### settings.conf
+### settings_openwebui.conf
 
 - `INSTANCE_NAME`: 实例名（时间戳后缀，如 `openwebui_8421`），决定容器名与数据目录。
 - `OPENWEBUI_PORT`: 面板对外暴露的宿主机端口。
@@ -29,7 +29,7 @@
 ```bash
 cd deploy_apps/openwebui
 
-# 常规分步拉起（推荐）：先生成配置、按需修改 settings.conf 后再启动
+# 常规分步拉起（推荐）：先生成配置、按需修改 settings_openwebui.conf 后再启动
 bash cli.sh init
 bash cli.sh start
 
@@ -50,13 +50,13 @@ bash cli.sh purge
 
 #### init
 
-若 `settings.conf` 不存在则用模板渲染生成，再创建数据目录，不启动容器。
+若 `settings_openwebui.conf` 不存在则用模板渲染生成，再创建数据目录，不启动容器。
 
 ```bash
 sed -e "s/{{INSTANCE_NAME}}/openwebui_<时间戳>/g" \
     -e "s/{{OPENWEBUI_PORT}}/<随机端口>/g" \
     -e "s/{{WEBUI_SECRET_KEY}}/<随机密钥>/g" \
-    "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
+    "$TPL_DIR/settings_openwebui.conf.tpl" > "$CONF_FILE"
 
 mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data"
 ```
@@ -100,7 +100,7 @@ docker stop "${INSTANCE_NAME}"
 
 #### rm
 
-删除容器，保留 `./data/` 与 `settings.conf`。
+删除容器，保留 `./data/` 与 `settings_openwebui.conf`。
 
 ```bash
 docker stop "${INSTANCE_NAME}"
@@ -109,7 +109,7 @@ docker rm "${INSTANCE_NAME}"
 
 #### purge
 
-删除容器并删除本地数据目录，保留 `settings.conf`。
+删除容器并删除本地数据目录，保留 `settings_openwebui.conf`。
 
 ```bash
 docker stop "${INSTANCE_NAME}"
@@ -124,7 +124,7 @@ rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data"
 
 ## 7. 关键环境变量参考
 
-`settings.conf` 默认仅暴露最常用变量，`cli.sh` 的 `docker run` 也只透传显式列出的 `-e` 变量。启用下列任一新增变量需同时满足两步：先写入 `settings.conf`，再在 `cli.sh` 的 `docker run` 段补一行 `-e <VAR>`。仅写进 `settings.conf` 不会自动注入容器。完整变量清单见 `env-configuration.mdx`，下文仅列部署常用项。
+`settings_openwebui.conf` 默认仅暴露最常用变量，`cli.sh` 的 `docker run` 也只透传显式列出的 `-e` 变量。启用下列任一新增变量需同时满足两步：先写入 `settings_openwebui.conf`，再在 `cli.sh` 的 `docker run` 段补一行 `-e <VAR>`。仅写进 `settings_openwebui.conf` 不会自动注入容器。完整变量清单见 `env-configuration.mdx`，下文仅列部署常用项。
 
 ### 7.1 ConfigVar 持久化机制
 
@@ -181,7 +181,7 @@ rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data"
 - `OPENAI_API_BASE_URLS`：示例 `https://api.openai.com/v1;https://api.b.ai/v1`
 - `OPENAI_API_KEYS`：示例 `sk-official-xxx;sk-proxy-xxx`
 
-`settings.conf` 完整配置示例：
+`settings_openwebui.conf` 完整配置示例：
 
 ```ini
 # 单数（单一源）
@@ -193,4 +193,4 @@ OPENAI_API_BASE_URLS="https://api.openai.com/v1;https://api.b.ai/v1"
 OPENAI_API_KEYS="sk-official-key;sk-proxy-key"
 ```
 
-这些变量属于 ConfigVar，首次启动后写入数据库，之后修改 `settings.conf` 不再生效（参见 7.2）。若需变更，建议在管理面板 `Settings > Connections` 中直接添加，或临时设 `ENABLE_PERSISTENT_CONFIG=False` 后清空容器重建使环境变量重新生效。
+这些变量属于 ConfigVar，首次启动后写入数据库，之后修改 `settings_openwebui.conf` 不再生效（参见 7.2）。若需变更，建议在管理面板 `Settings > Connections` 中直接添加，或临时设 `ENABLE_PERSISTENT_CONFIG=False` 后清空容器重建使环境变量重新生效。

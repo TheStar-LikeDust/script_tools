@@ -20,7 +20,7 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TPL_DIR="$SCRIPT_DIR/templates"
-CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings.conf}"
+CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_lobechat.conf}"
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 IMAGE="lobehub/lobehub:latest"
 HOOK_RUN_ARGS=()
@@ -64,7 +64,7 @@ generate_settings() {
         -e "s/{{LOBECHAT_PORT}}/${port}/g" \
         -e "s/{{KEY_VAULTS_SECRET}}/${vault_sec}/g" \
         -e "s/{{AUTH_SECRET}}/${auth_sec}/g" \
-        "$TPL_DIR/settings.conf.tpl" > "$CONF_FILE"
+        "$TPL_DIR/settings_lobechat.conf.tpl" > "$CONF_FILE"
 }
 
 # -----------------------------------------------------------------------------
@@ -84,11 +84,11 @@ do_init() {
     hr
     echo "[IMPORTANT] Since SSO is enabled, LobeChat needs Casdoor Client ID."
     echo "Recommended next steps:"
-    echo "  1. Review settings.conf"
+    echo "  1. Review settings_lobechat.conf"
     echo "  2. Run 'bash cli.sh start' to bring up all services"
     echo "  3. LobeChat might report an auth error initially - this is normal"
     echo "  4. Login to Casdoor Admin UI, create an application for LobeChat"
-    echo "  5. Set CASDOOR_CLIENT_ID / CASDOOR_CLIENT_SECRET in settings.conf"
+    echo "  5. Set CASDOOR_CLIENT_ID / CASDOOR_CLIENT_SECRET in settings_lobechat.conf"
     echo "  6. Recreate the app to apply auth: 'bash cli.sh rm && bash cli.sh start'"
     hr
 }
@@ -102,17 +102,17 @@ do_start() {
     # Resolve connection settings: internal => reach bundled containers by name on $net
     local db_url redis_url s3_endpoint s3_bucket s3_ak s3_sk casdoor_issuer casdoor_id casdoor_secret
     if [ "${USE_INTERNAL_DB:-true}" = "true" ]; then
-        db_url="postgresql://$(conf_val "$PG_CONF" DB_USER):$(conf_val "$PG_CONF" DB_PASSWORD)@paradedb_${INSTANCE_NAME}:5432/$(conf_val "$PG_CONF" DB_NAME)"
+        db_url="postgresql://$(conf_val "$PG_CONF" DB_USER):$(conf_val "$PG_CONF" DB_PASSWORD)@${INSTANCE_NAME}_paradedb:5432/$(conf_val "$PG_CONF" DB_NAME)"
     else
         db_url="postgresql://${EXTERNAL_DB_USER:-postgres}:${EXTERNAL_DB_PASSWORD:-}@${EXTERNAL_DB_HOST:-}:${EXTERNAL_DB_PORT:-5432}/${EXTERNAL_DB_NAME:-lobechat}"
     fi
     if [ "${USE_INTERNAL_REDIS:-true}" = "true" ]; then
-        redis_url="redis://redis_${INSTANCE_NAME}:6379"
+        redis_url="redis://${INSTANCE_NAME}_redis:6379"
     else
         redis_url="${EXTERNAL_REDIS_URL:-}"
     fi
     if [ "${USE_INTERNAL_S3:-true}" = "true" ]; then
-        s3_endpoint="http://rustfs_${INSTANCE_NAME}:9000"
+        s3_endpoint="http://${INSTANCE_NAME}_rustfs:9000"
         s3_bucket="${S3_BUCKET:-lobechat}"
         s3_ak="$(conf_val "$RUSTFS_CONF" RUSTFS_ACCESS_KEY)"
         s3_sk="$(conf_val "$RUSTFS_CONF" RUSTFS_SECRET_KEY)"
@@ -221,7 +221,7 @@ do_reset() {
 
 do_help() {
     echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME]"
-    echo "  init    : Generate settings.conf and initialize bundled dependencies, without starting"
+    echo "  init    : Generate settings_lobechat.conf and initialize bundled dependencies, without starting"
     echo "  start   : Start dependencies then the LobeChat container (pure docker run, no compose)"
     echo "  up      : Initialize configs and start containers instantly"
     echo "  stop    : Stop running containers"
@@ -229,7 +229,7 @@ do_help() {
     echo "  purge   : DANGER - Remove containers AND permanently delete ./data (Preserves configs)"
     echo "  reset   : DANGER - purge AND delete ALL settings (back to pristine source files)"
     echo ""
-    echo "Internal vs external dependencies are toggled by USE_INTERNAL_* in settings.conf."
+    echo "Internal vs external dependencies are toggled by USE_INTERNAL_* in settings_lobechat.conf."
     echo "Bundled paradedb/redis/rustfs are delegated via --conf (settings_*.conf live here);"
     echo "casdoor is a sibling app that self-bundles its own DB and keeps config in its own dir."
 }

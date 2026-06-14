@@ -306,11 +306,11 @@ llm_workspace/
 # script_tools generated artifacts (rendered by cli.sh init, must not be committed)
 # ==============================================================================
 # Per-instance settings (contain random secrets) and rendered compose files
-deploy/*/settings.conf
+deploy/*/settings*.conf
 deploy/*/compose.yml
-deploy_apps/*/settings.conf
+deploy_apps/*/settings*.conf
 deploy_apps/*/compose.yml
-tools/*/settings.conf
+tools/*/settings*.conf
 
 # Bundled sub-service rendered configs (e.g. settings_paradedb.conf; contain random secrets)
 deploy_apps/*/*_paradedb.conf
