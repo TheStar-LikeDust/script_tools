@@ -39,6 +39,7 @@ hr() { echo "-------------------------------------------------------------------
 random_port() { shuf -i 30000-40000 -n 1; }
 random_password() { openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 24; }
 random_key() { openssl rand -hex 32; }
+random_letters() { openssl rand -base64 48 | tr -dc 'a-z' | head -c 4; }
 
 container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
 
@@ -54,6 +55,7 @@ require_conf() {
 # -----------------------------------------------------------------------------
 generate_settings() {
     local port=$(random_port)
+    local admin_user=$(random_letters)
     local admin_pass=$(random_password)
     local jwt_secret=$(random_key)
     local totp_key=$(random_key)
@@ -65,6 +67,7 @@ generate_settings() {
 
     sed -e "s/{{INSTANCE_NAME}}/${name}/g" \
         -e "s/{{SUB2API_PORT}}/${port}/g" \
+        -e "s/{{ADMIN_USER}}/${admin_user}/g" \
         -e "s/{{ADMIN_PASSWORD}}/${admin_pass}/g" \
         -e "s/{{JWT_SECRET}}/${jwt_secret}/g" \
         -e "s/{{TOTP_ENCRYPTION_KEY}}/${totp_key}/g" \

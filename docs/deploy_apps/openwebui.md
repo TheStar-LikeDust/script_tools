@@ -15,7 +15,7 @@
 - `WEBUI_SECRET_KEY`: 面板 JWT 加密密钥（自动随机生成）。
 - `OLLAMA_BASE_URL`: Ollama 地址（默认 `http://host.docker.internal:11434`）。
 - `OPENAI_API_BASE_URL` / `OPENAI_API_KEY`: （可选）OpenAI 或兼容服务的地址与密钥。
-- `WEBUI_ADMIN_EMAIL` / `WEBUI_ADMIN_PASSWORD` / `WEBUI_ADMIN_NAME`: （可选）初始管理员的邮箱、密码和显示名称，仅在全新部署时生效。
+- `WEBUI_ADMIN_EMAIL` / `WEBUI_ADMIN_PASSWORD` / `WEBUI_ADMIN_NAME`: 初始管理员的邮箱、密码和显示名称，`init` 时随机生成（用户名与邮箱本地名共用同一 4 位小写字母随机串，形如显示名 `kxqp`、邮箱 `kxqp@example.com`），仅在全新部署时生效。
 - `HF_TOKEN`: （可选）HuggingFace Token，突破 RAG 模型下载限制。
 - `CORS_ALLOW_ORIGIN`: 跨域来源，默认 `*`（生产环境不安全，建议收紧）。
 - `USER_AGENT`: 联网搜索时伪装的浏览器 UA。
@@ -141,7 +141,7 @@ rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data"
 
 - `WEBUI_ADMIN_EMAIL`：管理员邮箱。
 - `WEBUI_ADMIN_PASSWORD`：管理员密码，按与手动注册相同的机制哈希后存储。
-- `WEBUI_ADMIN_NAME`：管理员显示名，默认 `Admin`。
+- `WEBUI_ADMIN_NAME`：管理员显示名，`init` 时随机生成（4 位小写字母，与邮箱本地名同串）。
 
 ### 7.3 外部数据库与状态存储
 

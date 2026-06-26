@@ -10,7 +10,7 @@ SERVER_MODE="release"
 RUN_MODE="standard"
 
 # === Admin account (auto-created on first run) ===
-ADMIN_EMAIL="admin@sub2api.local"
+ADMIN_EMAIL="{{ADMIN_USER}}@sub2api.local"
 ADMIN_PASSWORD="{{ADMIN_PASSWORD}}"
 
 # === JWT ===

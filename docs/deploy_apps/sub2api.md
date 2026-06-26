@@ -15,7 +15,7 @@
 - `TZ`: 容器时区，默认 `Asia/Shanghai`，影响数据库时间戳、统计当日边界、订阅到期与日志时间。
 - `SERVER_MODE`: 运行模式，默认 `release`。
 - `RUN_MODE`: 运行档位，默认 `standard`。
-- `ADMIN_EMAIL`: 管理员邮箱，默认 `admin@sub2api.local`。
+- `ADMIN_EMAIL`: 管理员邮箱，本地名 `init` 时随机生成（4 位小写字母）、拼接固定后缀，形如 `kxqp@sub2api.local`。
 - `ADMIN_PASSWORD`: 管理员密码，`init` 时随机生成。
 - `JWT_SECRET`: 登录会话签名密钥，`init` 时随机生成（`openssl rand -hex 32`）。首次启动后严禁更换，否则已签发会话全部失效。
 - `JWT_EXPIRE_HOUR`: 会话有效期小时数，默认 `24`。
@@ -76,6 +76,7 @@ bash cli.sh purge
 # 1) sub2api 自身配置（仅首次）
 sed -e "s/{{INSTANCE_NAME}}/sub2api_<时间戳>/g" \
     -e "s/{{SUB2API_PORT}}/<随机端口>/g" \
+    -e "s/{{ADMIN_USER}}/<随机4位字母>/g" \
     -e "s/{{ADMIN_PASSWORD}}/<随机密码>/g" \
     -e "s/{{JWT_SECRET}}/<随机密钥>/g" \
     -e "s/{{TOTP_ENCRYPTION_KEY}}/<随机密钥>/g" \
@@ -115,7 +116,7 @@ docker run -d \
     -e DATABASE_USER="postgres" -e DATABASE_PASSWORD="<随机密码>" \
     -e DATABASE_DBNAME="postgres" -e DATABASE_SSLMODE="disable" \
     -e REDIS_HOST="${INSTANCE_NAME}_redis" -e REDIS_PORT="6379" \
-    -e ADMIN_EMAIL="admin@sub2api.local" -e ADMIN_PASSWORD="<随机密码>" \
+    -e ADMIN_EMAIL="<随机4位字母>@sub2api.local" -e ADMIN_PASSWORD="<随机密码>" \
     -e JWT_SECRET="<随机密钥>" -e TOTP_ENCRYPTION_KEY="<随机密钥>" \
     -e TZ="Asia/Shanghai" \
     # ... 其余 settings_sub2api.conf 中的可选参数经 -e 透传 ...

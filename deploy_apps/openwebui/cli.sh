@@ -34,6 +34,7 @@ hook() { if declare -F "$1" >/dev/null; then "$1"; fi; }
 hr() { echo "-----------------------------------------------------------------------------"; }
 random_port() { shuf -i 30000-40000 -n 1; }
 random_secret() { openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32; }
+random_letters() { openssl rand -base64 48 | tr -dc 'a-z' | head -c 4; }
 
 container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
 
@@ -56,8 +57,7 @@ generate_settings() {
         name="openwebui_${ts: -4}"
     fi
 
-    local admin_suffix=$(openssl rand -hex 2)
-    local admin_name="admin_${admin_suffix}"
+    local admin_name=$(random_letters)
     local admin_email="${admin_name}@example.com"
     local admin_pass=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 16)
 

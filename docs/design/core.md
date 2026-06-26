@@ -81,3 +81,18 @@ reason why：
 - 动态容器网络：上层 `hooks.sh` 的 `on_start` 经 `lib/network.sh` 创建一个专属该实例的动态隔离网络（`${INSTANCE_NAME}_net`），把底层容器连接进来，二者按容器名无缝直连。这从根本上绕开了通过 host-gateway 或暴露宿主机端口时极易被系统防火墙拦截导致的连接超时问题。基础服务自身保持网络无关——它的 `settings_<服务名>.conf` 不固化网络名，由上层负责动态组网。
 
 reason why 委托而非 compose：底层逻辑只在一处维护（基础服务的 `cli.sh`），上层零重复；同时延续“单容器优先 docker run”，避免为附带一个依赖就引入 compose。
+
+## 7. 随机化默认凭证与账户名
+
+凡是服务首次启动会自动创建的初始凭证（密码、密钥、Access Key 等）一律在 `init` 阶段随机生成、落盘 `settings_<服务名>.conf`，绝不写死。在此基础上，**初始登录账户名同样不固定**：不再统一使用 `admin`、`root` 这类可预测的名字，而是随机生成，避免同机多开或跨部署出现同名账户、也降低被针对性爆破的面。
+
+约定：
+
+- 账户名采用 4 位随机小写字母（如 `kxqp`），由 `cli.sh` 第 2 段的工具函数 `random_letters()` 生成。该函数沿用与 `random_password` 相同的有限输入管道（`openssl rand -base64 48 | tr -dc 'a-z' | head -c 4`），而非读 `/dev/urandom`，以规避 `set -o pipefail` 下无限流被 `head` 提前关闭触发 SIGPIPE 的问题。
+- 同一随机串可同时作账户名与邮箱本地名：邮箱由“随机串 + 固定后缀”拼接（如 `kxqp@sub2api.local`、`kxqp@example.com`），用户名直接取该随机串。范例：`deploy_apps/sub2api`（`ADMIN_EMAIL`）、`deploy_apps/openwebui`（`WEBUI_ADMIN_NAME` 与 `WEBUI_ADMIN_EMAIL` 共用同一随机串）。
+- 随机值在 `init` 时一次性写入 `settings_<服务名>.conf`，后续生命周期统一从该文件读取，`start` 末尾回显账户/密码，保证幂等。
+
+有意例外：
+
+- 由应用本体（而非我们的 env 注入）创建的内置账户无法经配置改名（如 Casdoor 内置 `admin`），不在此约束内。
+- 数据库超级用户名保留约定俗成的 `postgres`（如 `deploy_services/paradedb` 的 `DB_USER`）：其密码已随机、端口随机，且 bundled DB 仅在专属内网可达，攻击面已足够小，随机化反而增加对接心智负担。
