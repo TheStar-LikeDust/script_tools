@@ -4,7 +4,7 @@
 
 > New API 是一个 AI 模型接口管理与分发网关，统一聚合多家上游模型供应商，提供密钥管理、额度计费与请求转发能力。
 
-它依赖 PostgreSQL 持久化业务数据、依赖 Redis 做缓存。部署采用全捆绑模式：`init` 通过级联机制委托 `deploy/paradedb` 与 `deploy/redis` 在本目录内生成各自配置与数据落点，`start` 时动态组建专属网络将三个容器按容器名直连。
+它依赖 PostgreSQL 持久化业务数据、依赖 Redis 做缓存。部署采用全捆绑模式：`init` 通过级联机制委托 `deploy_services/paradedb` 与 `deploy_services/redis` 在本目录内生成各自配置与数据落点，`start` 时动态组建专属网络将三个容器按容器名直连。
 
 ## 2. 核心配置项
 
@@ -66,10 +66,10 @@ sed -e "s/{{INSTANCE_NAME}}/newapi_<时间戳>/g" \
     "$SCRIPT_DIR/templates/settings_newapi.conf.tpl" > settings_newapi.conf
 
 # 2) 委托 paradedb 与 redis——配置与数据都落在 newapi 目录
-bash ../../deploy/paradedb/cli.sh init \
+bash ../../deploy_services/paradedb/cli.sh init \
     --conf "$CONF_DIR/settings_paradedb.conf" \
     --name "newapi_<时间戳>_paradedb"
-bash ../../deploy/redis/cli.sh init \
+bash ../../deploy_services/redis/cli.sh init \
     --conf "$CONF_DIR/settings_redis.conf" \
     --name "newapi_<时间戳>_redis"
 ```
@@ -81,8 +81,8 @@ bash ../../deploy/redis/cli.sh init \
 ```bash
 # 建网络 -> 起依赖 -> 接入网络 -> 等 DB 健康
 docker network inspect "${INSTANCE_NAME}_net" >/dev/null 2>&1 || docker network create "${INSTANCE_NAME}_net"
-bash ../../deploy/paradedb/cli.sh start --conf "$CONF_DIR/settings_paradedb.conf"
-bash ../../deploy/redis/cli.sh start --conf "$CONF_DIR/settings_redis.conf"
+bash ../../deploy_services/paradedb/cli.sh start --conf "$CONF_DIR/settings_paradedb.conf"
+bash ../../deploy_services/redis/cli.sh start --conf "$CONF_DIR/settings_redis.conf"
 docker network connect "${INSTANCE_NAME}_net" "${INSTANCE_NAME}_paradedb"
 docker network connect "${INSTANCE_NAME}_net" "${INSTANCE_NAME}_redis"
 
@@ -112,8 +112,8 @@ docker run -d \
 
 ```bash
 docker stop "${INSTANCE_NAME}"
-bash ../../deploy/paradedb/cli.sh stop --conf "$CONF_DIR/settings_paradedb.conf"
-bash ../../deploy/redis/cli.sh stop --conf "$CONF_DIR/settings_redis.conf"
+bash ../../deploy_services/paradedb/cli.sh stop --conf "$CONF_DIR/settings_paradedb.conf"
+bash ../../deploy_services/redis/cli.sh stop --conf "$CONF_DIR/settings_redis.conf"
 ```
 
 #### rm
@@ -122,8 +122,8 @@ bash ../../deploy/redis/cli.sh stop --conf "$CONF_DIR/settings_redis.conf"
 
 ```bash
 docker stop "${INSTANCE_NAME}"; docker rm "${INSTANCE_NAME}"
-bash ../../deploy/paradedb/cli.sh rm --conf "$CONF_DIR/settings_paradedb.conf"
-bash ../../deploy/redis/cli.sh rm --conf "$CONF_DIR/settings_redis.conf"
+bash ../../deploy_services/paradedb/cli.sh rm --conf "$CONF_DIR/settings_paradedb.conf"
+bash ../../deploy_services/redis/cli.sh rm --conf "$CONF_DIR/settings_redis.conf"
 docker network rm "${INSTANCE_NAME}_net"
 ```
 
@@ -134,8 +134,8 @@ docker network rm "${INSTANCE_NAME}_net"
 ```bash
 docker stop "${INSTANCE_NAME}"; docker rm "${INSTANCE_NAME}"
 rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data"
-bash ../../deploy/paradedb/cli.sh purge --conf "$CONF_DIR/settings_paradedb.conf"
-bash ../../deploy/redis/cli.sh purge --conf "$CONF_DIR/settings_redis.conf"
+bash ../../deploy_services/paradedb/cli.sh purge --conf "$CONF_DIR/settings_paradedb.conf"
+bash ../../deploy_services/redis/cli.sh purge --conf "$CONF_DIR/settings_redis.conf"
 docker network rm "${INSTANCE_NAME}_net"
 ```
 
@@ -151,4 +151,4 @@ docker network rm "${INSTANCE_NAME}_net"
 
 - 镜像版本：当前固定 `calciumion/new-api:latest`，需可复现可锁定具体标签。
 - 多节点 / 高级参数：`SESSION_SECRET`、`NODE_NAME`、`STREAMING_TIMEOUT` 等官方可选环境变量未收录，单机部署不需要；如有需求可在 `cli.sh` 的 `docker run` 中追加 `-e` 项。
-- 依赖 repo 结构：通过相对路径 `../../deploy/paradedb`、`../../deploy/redis` 与 `../../lib/network.sh` 定位共享脚本；newapi 目录里的配置与数据是可随目录迁移的资产，整体搬迁请连同 repo 一起。
+- 依赖 repo 结构：通过相对路径 `../../deploy_services/paradedb`、`../../deploy_services/redis` 与 `../../lib/network.sh` 定位共享脚本；newapi 目录里的配置与数据是可随目录迁移的资产，整体搬迁请连同 repo 一起。

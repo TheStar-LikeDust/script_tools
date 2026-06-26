@@ -10,8 +10,8 @@ source "$SCRIPT_DIR/../../lib/network.sh"
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
-# Bundled DB delegated to deploy/paradedb's cli.sh; its config + data live here via --conf
-PARADEDB_CLI="$SCRIPT_DIR/../../deploy/paradedb/cli.sh"
+# Bundled DB delegated to deploy_services/paradedb's cli.sh; its config + data live here via --conf
+PARADEDB_CLI="$SCRIPT_DIR/../../deploy_services/paradedb/cli.sh"
 PG_CONF="$SCRIPT_DIR/settings_paradedb.conf"
 deploy_paradedb() { local sub="$1"; shift; bash "$PARADEDB_CLI" "$sub" --conf "$PG_CONF" "$@"; }
 

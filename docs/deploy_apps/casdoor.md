@@ -66,7 +66,7 @@ sed -e "s/{{INSTANCE_NAME}}/casdoor_<时间戳>/g" \
     "$SCRIPT_DIR/templates/settings_casdoor.conf.tpl" > settings_casdoor.conf
 
 # 2) 委托 paradedb（附带模式）——配置与数据都落在 casdoor 目录
-bash ../../deploy/paradedb/cli.sh init \
+bash ../../deploy_services/paradedb/cli.sh init \
     --conf "$CONF_DIR/settings_paradedb.conf" \
     --name "casdoor_<时间戳>_paradedb"
 
@@ -87,7 +87,7 @@ sed -e "s#{{CASDOOR_DB_USER}}#postgres#g" \
 ```bash
 # 附带模式：建网络 -> 起库 -> 把库接入网络 -> 等健康
 docker network inspect "${INSTANCE_NAME}_net" >/dev/null 2>&1 || docker network create "${INSTANCE_NAME}_net"
-bash ../../deploy/paradedb/cli.sh start --conf "$CONF_DIR/settings_paradedb.conf"
+bash ../../deploy_services/paradedb/cli.sh start --conf "$CONF_DIR/settings_paradedb.conf"
 docker network connect "${INSTANCE_NAME}_net" "${INSTANCE_NAME}_paradedb"
 
 # 起 casdoor（附带模式带 --network；外部模式无此参数；已存在则仅 docker start）
@@ -112,7 +112,7 @@ docker run -d \
 
 ```bash
 docker stop "${INSTANCE_NAME}"
-bash ../../deploy/paradedb/cli.sh stop --conf "$CONF_DIR/settings_paradedb.conf"   # 附带模式
+bash ../../deploy_services/paradedb/cli.sh stop --conf "$CONF_DIR/settings_paradedb.conf"   # 附带模式
 ```
 
 #### rm
@@ -121,7 +121,7 @@ bash ../../deploy/paradedb/cli.sh stop --conf "$CONF_DIR/settings_paradedb.conf"
 
 ```bash
 docker stop "${INSTANCE_NAME}"; docker rm "${INSTANCE_NAME}"
-bash ../../deploy/paradedb/cli.sh rm --conf "$CONF_DIR/settings_paradedb.conf"      # 附带模式
+bash ../../deploy_services/paradedb/cli.sh rm --conf "$CONF_DIR/settings_paradedb.conf"      # 附带模式
 docker network rm "${INSTANCE_NAME}_net"                                             # 附带模式
 ```
 
@@ -132,7 +132,7 @@ docker network rm "${INSTANCE_NAME}_net"                                        
 ```bash
 docker stop "${INSTANCE_NAME}"; docker rm "${INSTANCE_NAME}"
 rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data" "$CONF_DIR/data/${INSTANCE_NAME}_config"
-bash ../../deploy/paradedb/cli.sh purge --conf "$CONF_DIR/settings_paradedb.conf"   # 附带模式
+bash ../../deploy_services/paradedb/cli.sh purge --conf "$CONF_DIR/settings_paradedb.conf"   # 附带模式
 docker network rm "${INSTANCE_NAME}_net"                                             # 附带模式
 ```
 
@@ -144,4 +144,4 @@ docker network rm "${INSTANCE_NAME}_net"                                        
 
 - 镜像版本：当前固定 `casbin/casdoor:latest`，需可复现可锁定具体标签。
 - 外部反代：可在 Docker 外层嵌套 Nginx 实现域名与 HTTPS。
-- 依赖 repo 结构：附带模式通过相对路径 `../../deploy/paradedb` 定位 paradedb 脚本（脚本为共享代码）；casdoor 目录里的配置与数据是可随目录迁移的资产，整体搬迁请连同 repo 一起。
+- 依赖 repo 结构：附带模式通过相对路径 `../../deploy_services/paradedb` 定位 paradedb 脚本（脚本为共享代码）；casdoor 目录里的配置与数据是可随目录迁移的资产，整体搬迁请连同 repo 一起。

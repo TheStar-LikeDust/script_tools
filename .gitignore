@@ -301,13 +301,14 @@ result.png
 # llm records/memory/plan 
 llm_workspace/
 
+.devin/
 
 # ==============================================================================
 # script_tools generated artifacts (rendered by cli.sh init, must not be committed)
 # ==============================================================================
 # Per-instance settings (contain random secrets) and rendered compose files
-deploy/*/settings*.conf
-deploy/*/compose.yml
+deploy_services/*/settings*.conf
+deploy_services/*/compose.yml
 deploy_apps/*/settings*.conf
 deploy_apps/*/compose.yml
 tools/*/settings*.conf
@@ -318,7 +319,7 @@ deploy_apps/*/*_redis.conf
 deploy_apps/*/*_rustfs.conf
 
 # Persistent data directories
-deploy/*/data/
+deploy_services/*/data/
 deploy_apps/*/data/
 tools/*/data/
 tools/*/user-data/

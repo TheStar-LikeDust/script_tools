@@ -88,7 +88,7 @@ do_init() {
     echo "[SUCCESS] [Casdoor] Initialization completed!"
     hr
     if [ "$WITH_BUNDLED_DB" = "true" ]; then
-        echo "[INFO] Bundled paradedb config: settings_paradedb.conf (managed by deploy/paradedb)"
+        echo "[INFO] Bundled paradedb config: settings_paradedb.conf (managed by deploy_services/paradedb)"
         echo "[INFO] Run 'bash cli.sh start' to bring up DB + Casdoor."
     else
         echo "[IMPORTANT] External DB mode: fill EXT_DB_* in settings_casdoor.conf, then 'bash cli.sh start'."

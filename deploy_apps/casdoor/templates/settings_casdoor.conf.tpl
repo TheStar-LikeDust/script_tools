@@ -7,7 +7,7 @@ CASDOOR_PORT="{{CASDOOR_PORT}}"
 CASDOOR_DB_NAME="casdoor"
 
 # Bundled DB switch:
-#   true  -> bundle a paradedb (delegated to deploy/paradedb; see casdoor_paradedb.conf)
+#   true  -> bundle a paradedb (delegated to deploy_services/paradedb; see casdoor_paradedb.conf)
 #   false -> connect to the external database configured below
 WITH_BUNDLED_DB="{{WITH_BUNDLED_DB}}"
 

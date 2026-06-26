@@ -42,7 +42,7 @@ bootstrap_workspace() {
     echo ""
     echo "  cd ${TARGET_DIR}"
     echo "  # Example: Start a standalone ParadeDB:"
-    echo "  cd deploy/paradedb && bash cli.sh init"
+    echo "  cd deploy_services/paradedb && bash cli.sh init"
     echo "======================================================================"
 }
 

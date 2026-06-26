@@ -1,6 +1,6 @@
 # 服务文档结构设计 (Service Doc Structure)
 
-本文件规定 `docs/` 下每个服务说明文档的章节结构，以 `docs/openwebui.md` 为基准模板。新增服务文档时照此骨架填写，保证所有服务文档风格统一。
+本文件规定 `docs/` 下每个服务说明文档的章节结构，以 `docs/deploy_apps/openwebui.md` 为基准模板。服务文档按脚本三层归位至 `docs/deploy_services/`、`docs/deploy_apps/`、`docs/tools/`（与脚本目录规则一致）。新增服务文档时照此骨架填写，保证所有服务文档风格统一。
 
 文档约定：
 - 标题必带序号：二级标题必须带数字序号（例如 `## 1. 简介`）。

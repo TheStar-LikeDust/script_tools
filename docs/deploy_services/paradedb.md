@@ -23,7 +23,7 @@
 ## 4. 快速执行
 
 ```bash
-cd deploy/paradedb
+cd deploy_services/paradedb
 
 # 常规分步拉起（推荐）：先生成配置、按需修改 settings_paradedb.conf 后再启动
 bash cli.sh init

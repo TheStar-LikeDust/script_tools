@@ -154,7 +154,7 @@ rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data"
 
 ### 7.4 对象存储 (S3 / RustFS / MinIO)
 
-将上传文件外置到对象存储，对应本项目的 `deploy/rustfs`。
+将上传文件外置到对象存储，对应本项目的 `deploy_services/rustfs`。
 
 - `STORAGE_PROVIDER`：留空为 `local`，置为 `s3` 启用 S3 兼容存储。
 - `S3_ENDPOINT_URL`：S3 兼容端点地址。

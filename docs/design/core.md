@@ -23,7 +23,7 @@
 
 ## 2. 三层架构
 
-- `deploy/`：原子基础服务（如 ParadeDB、RustFS、Redis），可独立部署、启停、销毁，通过 `INSTANCE_NAME` 与端口多开隔离。
+- `deploy_services/`：原子基础服务（如 ParadeDB、RustFS、Redis），可独立部署、启停、销毁，通过 `INSTANCE_NAME` 与端口多开隔离。
 - `deploy_apps/`：复合应用（如 LobeChat、Open WebUI），通过向下级联调用组装底层原子服务，配置上提供“内置隔离组装”与“连接外部已有服务”两种分支。复合服务的级联与组网等特殊操作集中在各自的 `hooks.sh`。
 - `tools/`：宿主机（非 docker 级）的开发环境与工具（如 code-server、tmux）。尽管不基于 Docker，该层仍严格遵循 command.md 的标准五段式命令规范（`init/start/up/stop/rm/purge`）与 `--conf/--name` 的沙箱化路径隔离特性，将宿主机进程（如 tmux 守护）无缝对齐到全项目的统一生命周期中，不再使用自定义的散装命令。
 
@@ -76,7 +76,7 @@ reason why：
 
 委托约定（以 casdoor 嵌入 paradedb 为例）：
 
-- 渲染：上层在自身目录下渲染底层配置（如 `settings_paradedb.conf`），随后 `bash ../../deploy/paradedb/cli.sh <cmd> --conf <该配置> --name <上层实例名>_paradedb`。
+- 渲染：上层在自身目录下渲染底层配置（如 `settings_paradedb.conf`），随后 `bash ../../deploy_services/paradedb/cli.sh <cmd> --conf <该配置> --name <上层实例名>_paradedb`。
 - 生命周期：上层在 `hooks.sh` 的 `on_init/on_start/on_stop/on_rm/on_purge` 中把对应命令逐条转发给底层，保证级联整体的幂等与一致清理。
 - 动态容器网络：上层 `hooks.sh` 的 `on_start` 经 `lib/network.sh` 创建一个专属该实例的动态隔离网络（`${INSTANCE_NAME}_net`），把底层容器连接进来，二者按容器名无缝直连。这从根本上绕开了通过 host-gateway 或暴露宿主机端口时极易被系统防火墙拦截导致的连接超时问题。基础服务自身保持网络无关——它的 `settings_<服务名>.conf` 不固化网络名，由上层负责动态组网。
 

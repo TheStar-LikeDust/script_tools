@@ -4,7 +4,7 @@
 
 > Sub2API 是一个 AI 模型订阅转 API 的网关，将上游订阅账号统一聚合为标准 API，提供账号管理、密钥分发与请求转发能力。
 
-它依赖 PostgreSQL 持久化业务数据、依赖 Redis 做缓存。部署采用全捆绑模式：`init` 通过级联机制委托 `deploy/paradedb` 与 `deploy/redis` 在本目录内生成各自配置与数据落点，`start` 时动态组建专属网络将三个容器按容器名直连。容器以 `AUTO_SETUP=true` 自动完成数据库迁移，并在首次启动按 `ADMIN_EMAIL`/`ADMIN_PASSWORD` 自动创建管理员账号。
+它依赖 PostgreSQL 持久化业务数据、依赖 Redis 做缓存。部署采用全捆绑模式：`init` 通过级联机制委托 `deploy_services/paradedb` 与 `deploy_services/redis` 在本目录内生成各自配置与数据落点，`start` 时动态组建专属网络将三个容器按容器名直连。容器以 `AUTO_SETUP=true` 自动完成数据库迁移，并在首次启动按 `ADMIN_EMAIL`/`ADMIN_PASSWORD` 自动创建管理员账号。
 
 ## 2. 核心配置项
 
@@ -40,7 +40,7 @@
 
 - 连接信息注入机制：`DATABASE_HOST/USER/PASSWORD/DBNAME` 与 `REDIS_HOST` 不落盘在 `settings_sub2api.conf`，而是每次 `start` 时从两份附带配置实时读取（host 为依赖容器名、端口为容器内部端口），经 `-e` 注入容器。修改数据库凭证只需改 `settings_paradedb.conf` 后 `rm` 再 `start`。
 - 附带 redis 仅在专属隔离网络内被访问，未设密码；对外暴露的仅是 redis 自身 `settings_redis.conf` 中的随机宿主机端口，如需对外屏蔽可手动移除该端口映射。
-- 数据库复用项目的 `deploy/paradedb`（PostgreSQL 兼容），默认库与用户均为 `postgres`，`DATABASE_SSLMODE` 固定 `disable`。
+- 数据库复用项目的 `deploy_services/paradedb`（PostgreSQL 兼容），默认库与用户均为 `postgres`，`DATABASE_SSLMODE` 固定 `disable`。
 - 容器以 `--ulimit nofile=100000:100000` 提升文件句柄上限，适配网关的高并发连接。
 - 首次启动按 `ADMIN_EMAIL`/`ADMIN_PASSWORD` 自动创建管理员账号，`start` 结束会回显该凭证。
 
@@ -82,10 +82,10 @@ sed -e "s/{{INSTANCE_NAME}}/sub2api_<时间戳>/g" \
     "$SCRIPT_DIR/templates/settings_sub2api.conf.tpl" > settings_sub2api.conf
 
 # 2) 委托 paradedb 与 redis——配置与数据都落在 sub2api 目录
-bash ../../deploy/paradedb/cli.sh init \
+bash ../../deploy_services/paradedb/cli.sh init \
     --conf "$CONF_DIR/settings_paradedb.conf" \
     --name "sub2api_<时间戳>_paradedb"
-bash ../../deploy/redis/cli.sh init \
+bash ../../deploy_services/redis/cli.sh init \
     --conf "$CONF_DIR/settings_redis.conf" \
     --name "sub2api_<时间戳>_redis"
 ```
@@ -97,8 +97,8 @@ bash ../../deploy/redis/cli.sh init \
 ```bash
 # 建网络 -> 起依赖 -> 接入网络 -> 等 DB 健康
 docker network inspect "${INSTANCE_NAME}_net" >/dev/null 2>&1 || docker network create "${INSTANCE_NAME}_net"
-bash ../../deploy/paradedb/cli.sh start --conf "$CONF_DIR/settings_paradedb.conf"
-bash ../../deploy/redis/cli.sh start --conf "$CONF_DIR/settings_redis.conf"
+bash ../../deploy_services/paradedb/cli.sh start --conf "$CONF_DIR/settings_paradedb.conf"
+bash ../../deploy_services/redis/cli.sh start --conf "$CONF_DIR/settings_redis.conf"
 docker network connect "${INSTANCE_NAME}_net" "${INSTANCE_NAME}_paradedb"
 docker network connect "${INSTANCE_NAME}_net" "${INSTANCE_NAME}_redis"
 
@@ -134,8 +134,8 @@ docker run -d \
 
 ```bash
 docker stop "${INSTANCE_NAME}"
-bash ../../deploy/paradedb/cli.sh stop --conf "$CONF_DIR/settings_paradedb.conf"
-bash ../../deploy/redis/cli.sh stop --conf "$CONF_DIR/settings_redis.conf"
+bash ../../deploy_services/paradedb/cli.sh stop --conf "$CONF_DIR/settings_paradedb.conf"
+bash ../../deploy_services/redis/cli.sh stop --conf "$CONF_DIR/settings_redis.conf"
 ```
 
 #### rm
@@ -144,8 +144,8 @@ bash ../../deploy/redis/cli.sh stop --conf "$CONF_DIR/settings_redis.conf"
 
 ```bash
 docker stop "${INSTANCE_NAME}"; docker rm "${INSTANCE_NAME}"
-bash ../../deploy/paradedb/cli.sh rm --conf "$CONF_DIR/settings_paradedb.conf"
-bash ../../deploy/redis/cli.sh rm --conf "$CONF_DIR/settings_redis.conf"
+bash ../../deploy_services/paradedb/cli.sh rm --conf "$CONF_DIR/settings_paradedb.conf"
+bash ../../deploy_services/redis/cli.sh rm --conf "$CONF_DIR/settings_redis.conf"
 docker network rm "${INSTANCE_NAME}_net"
 ```
 
@@ -156,8 +156,8 @@ docker network rm "${INSTANCE_NAME}_net"
 ```bash
 docker stop "${INSTANCE_NAME}"; docker rm "${INSTANCE_NAME}"
 rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data"
-bash ../../deploy/paradedb/cli.sh purge --conf "$CONF_DIR/settings_paradedb.conf"
-bash ../../deploy/redis/cli.sh purge --conf "$CONF_DIR/settings_redis.conf"
+bash ../../deploy_services/paradedb/cli.sh purge --conf "$CONF_DIR/settings_paradedb.conf"
+bash ../../deploy_services/redis/cli.sh purge --conf "$CONF_DIR/settings_redis.conf"
 docker network rm "${INSTANCE_NAME}_net"
 ```
 
@@ -172,6 +172,6 @@ docker network rm "${INSTANCE_NAME}_net"
 ## 6. 其他补充
 
 - 镜像版本：当前固定 `weishaw/sub2api:latest`，需可复现可锁定具体标签。
-- 数据库选型：官方 compose 使用 `postgres:18-alpine`，本项目复用 `deploy/paradedb`（PostgreSQL 兼容）以统一依赖；如需严格对齐官方镜像，可另行替换底层依赖。
+- 数据库选型：官方 compose 使用 `postgres:18-alpine`，本项目复用 `deploy_services/paradedb`（PostgreSQL 兼容）以统一依赖；如需严格对齐官方镜像，可另行替换底层依赖。
 - 环境变量：`settings_sub2api.conf` 收录了较完整的可选项（Gemini OAuth、URL 白名单、网关并发等），默认值与官方 compose 一致，无需即可保持默认。
-- 依赖 repo 结构：通过相对路径 `../../deploy/paradedb`、`../../deploy/redis` 与 `../../lib/network.sh` 定位共享脚本；sub2api 目录里的配置与数据是可随目录迁移的资产，整体搬迁请连同 repo 一起。
+- 依赖 repo 结构：通过相对路径 `../../deploy_services/paradedb`、`../../deploy_services/redis` 与 `../../lib/network.sh` 定位共享脚本；sub2api 目录里的配置与数据是可随目录迁移的资产，整体搬迁请连同 repo 一起。

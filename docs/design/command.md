@@ -1,6 +1,6 @@
 # 命令设计理念 (CLI Command Design)
 
-本文件说明各服务目录下 cli.sh 的命令规范、文件职责分层与设计原因。`deploy/` 与 `deploy_apps/` 下的服务遵循统一的命令集、文件分层与行为约定。（`tools/` 为宿主机级工具，命令集按工具自身需要定义，不受本规范约束，见 core.md 第 2 节。）
+本文件说明各服务目录下 cli.sh 的命令规范、文件职责分层与设计原因。`deploy_services/` 与 `deploy_apps/` 下的服务遵循统一的命令集、文件分层与行为约定。（`tools/` 为宿主机级工具，命令集按工具自身需要定义，不受本规范约束，见 core.md 第 2 节。）
 
 ## 1. 设计思路
 
@@ -136,5 +136,5 @@ esac
 - network：代理命令，仅当服务在 hooks.sh 中定义了 on_network 时才生效（即含底层依赖级联、需要专属网络的复合服务）。cli.sh 检测到 on_network 后将其暴露，常用 `bash cli.sh network ls` 经 lib/network.sh 展示该实例的专属网络及已连接的容器；单体独立应用未定义则回落到 help。
 - help：缺省或未知参数时触发，打印各命令的简短说明及用法。
 - 钩子 (on_init / on_start / on_stop / on_rm / on_purge / on_network)：并非用户直接调用的命令，而是 cli.sh 在对应生命周期点被动回调 hooks.sh 中的同名函数，用于挂载服务专属的特殊操作（见第 2 节）。
-- 级联嵌入参数 (--conf, --name)：附加在基础服务的任意生命周期命令后，可指定被嵌入实例的配置位置与实例名。这改变了命令作用的目标实例而不改变命令语义，如 bash deploy/paradedb/cli.sh start --conf ../settings_paradedb.conf。
+- 级联嵌入参数 (--conf, --name)：附加在基础服务的任意生命周期命令后，可指定被嵌入实例的配置位置与实例名。这改变了命令作用的目标实例而不改变命令语义，如 bash deploy_services/paradedb/cli.sh start --conf ../settings_paradedb.conf。
 - Init-only 模式分歧开关 (如 --external)：对于改变拓扑架构的部署选项（例如是否使用外部云数据库），通过给 init 增加专属 flag 解决。cli.sh 只在 init 阶段解析它（收集在 EXTRA_ARGS 中）并将意图写入 settings_<服务名>.conf，后续生命周期一律统一从 settings_<服务名>.conf 读取状态，实现一次设定、永久生效。

@@ -14,7 +14,7 @@
 ## 项目架构
 
 本项目将部署逻辑分为三层：
-- **`deploy/` (基础部署)**：原子的、可独立运行的服务组件（如 paradedb, rustfs, redis）。
+- **`deploy_services/` (基础部署)**：原子的、可独立运行的服务组件（如 paradedb, rustfs, redis）。
 - **`deploy_apps/` (复合应用)**：按用途划分的应用层组件（如 lobechat 全栈【暂时终止开发】、openwebui、casdoor、newapi、sub2api），可组合多个基础服务实现一键部署。
 - **`tools/` (宿主机工具)**：用于存放宿主机（非 Docker 级别的）环境配置和开发工具（如 code-server、nginx 反代网关、docker 宿主机配置 ufw-docker 等）。
 
@@ -29,7 +29,7 @@
 
 - `docs/design/command.md`：cli.sh 的命令与代码设计（命令集、`do_` 前缀命名、脚本结构、`hr()` 回显规范、`start` 幂等语义）。
 - `docs/design/core.md`：服务/目录的组织与部署设计（目录即服务、单容器优先用 docker run、`source + -e` 配置注入、实例命名、委托式级联与 `--conf`/`--name` 通用参数、app 级网络组装）。
-- `docs/design/document.md`：服务说明文档（`docs/*.md`）的章节结构规范，以 `docs/openwebui.md` 为模板。
+- `docs/design/document.md`：服务说明文档（`docs/{deploy_services,deploy_apps,tools}/*.md`，按脚本三层归位）的章节结构规范，以 `docs/deploy_apps/openwebui.md` 为模板。
 
 ## 快速获取安装
 
@@ -47,7 +47,7 @@ cd script_tools
 假设你需要一个独立的 ParadeDB 数据库做测试：
 
 ```bash
-cd deploy/paradedb
+cd deploy_services/paradedb
 ```
 
 **方式 1：标准部署（推荐，支持自定义配置）**

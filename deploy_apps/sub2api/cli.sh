@@ -90,8 +90,8 @@ do_init() {
     hr
     echo "[SUCCESS] [Sub2API] Initialization completed!"
     hr
-    echo "[INFO] Bundled paradedb config: settings_paradedb.conf (managed by deploy/paradedb)"
-    echo "[INFO] Bundled redis config:    settings_redis.conf (managed by deploy/redis)"
+    echo "[INFO] Bundled paradedb config: settings_paradedb.conf (managed by deploy_services/paradedb)"
+    echo "[INFO] Bundled redis config:    settings_redis.conf (managed by deploy_services/redis)"
     echo "[INFO] Run 'bash cli.sh start' to bring up DB + Redis + Sub2API."
     hr
 }

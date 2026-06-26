@@ -2,9 +2,9 @@
 
 source "$SCRIPT_DIR/../../lib/network.sh"
 
-PARADEDB_CLI="$SCRIPT_DIR/../../deploy/paradedb/cli.sh"
-REDIS_CLI="$SCRIPT_DIR/../../deploy/redis/cli.sh"
-RUSTFS_CLI="$SCRIPT_DIR/../../deploy/rustfs/cli.sh"
+PARADEDB_CLI="$SCRIPT_DIR/../../deploy_services/paradedb/cli.sh"
+REDIS_CLI="$SCRIPT_DIR/../../deploy_services/redis/cli.sh"
+RUSTFS_CLI="$SCRIPT_DIR/../../deploy_services/rustfs/cli.sh"
 CASDOOR_CLI="$SCRIPT_DIR/../casdoor/cli.sh"
 
 PG_CONF="$CONF_DIR/settings_paradedb.conf"

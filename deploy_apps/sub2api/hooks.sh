@@ -10,9 +10,9 @@ source "$SCRIPT_DIR/../../lib/network.sh"
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
-# Bundled deps delegated to deploy/*'s cli.sh; their configs + data live here via --conf
-PARADEDB_CLI="$SCRIPT_DIR/../../deploy/paradedb/cli.sh"
-REDIS_CLI="$SCRIPT_DIR/../../deploy/redis/cli.sh"
+# Bundled deps delegated to deploy_services/*'s cli.sh; their configs + data live here via --conf
+PARADEDB_CLI="$SCRIPT_DIR/../../deploy_services/paradedb/cli.sh"
+REDIS_CLI="$SCRIPT_DIR/../../deploy_services/redis/cli.sh"
 PG_CONF="$CONF_DIR/settings_paradedb.conf"
 REDIS_CONF="$CONF_DIR/settings_redis.conf"
 deploy_paradedb() { local sub="$1"; shift; bash "$PARADEDB_CLI" "$sub" --conf "$PG_CONF" "$@"; }
