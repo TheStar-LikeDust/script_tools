@@ -6,7 +6,7 @@
 
 一个服务运行所需的全部元素都内聚在它专属的文件夹里：控制脚本 `cli.sh`、可选的服务特殊操作 `hooks.sh`、配置模板 `templates/*.tpl`、生成的 `settings_<服务名>.conf`、持久化数据 `./data`。迁移或备份只需打包拷贝这一个目录。
 
-**职责分层**：`cli.sh` 只保留最基础的生命周期骨架与本服务的 `docker run`；服务专属的特殊操作（级联依赖、附属配置渲染、组网）下沉到同目录可选的 `hooks.sh`，由 `cli.sh` 在生命周期点被动回调其 `on_*` 钩子；跨服务复用的选配能力抽到项目级共享库 `lib/`（目前为 `lib/network.sh`），由用到它的 `hooks.sh` 经相对路径引用。详见 command.md 第 2 节。`lib/` 的路径与项目仓库绑定，作为约定不注入服务目录；仅依赖单目录自包含的简单服务本就不引用它。
+**职责分层**：`cli.sh` 只保留最基础的生命周期骨架与本服务的 `docker run`；服务专属的特殊操作（级联依赖、附属配置渲染、组网）下沉到同目录可选的 `hooks.sh`，由 `cli.sh` 在生命周期点被动回调其 `on_*` 钩子；跨服务复用的选配能力抽到项目级共享库 `shared_scripts/`（目前为 `shared_scripts/network.sh`），由用到它的 `hooks.sh` 经相对路径引用。详见 command.md 第 2 节。`shared_scripts/` 的路径与项目仓库绑定，作为约定不注入服务目录；仅依赖单目录自包含的简单服务本就不引用它。
 
 **路径锚定特性**：为保证目录可随意移动，控制脚本 `cli.sh` 启动时会动态计算自身所在目录（`SCRIPT_DIR`）。配置内严禁写死绝对路径，所有相关配置文件和数据目录的派生均基于此锚点路径展开。这样即便是从任意当前工作目录（cwd）去调用脚本、或整体移动服务目录，整个服务都不会失效。
 
@@ -14,7 +14,7 @@
 
 源文件与生成物的区分：
 
-- 源文件（纳入版本管理）：`cli.sh`、可选的 `hooks.sh`、`templates/*.tpl`、项目级共享库 `lib/*.sh`、该服务的说明文档。
+- 源文件（纳入版本管理）：`cli.sh`、可选的 `hooks.sh`、`templates/*.tpl`、项目级共享库 `shared_scripts/*.sh`、该服务的说明文档。
 - 生成物（不提交，由 `.gitignore` 忽略）：`settings_<服务名>.conf`、被嵌入子服务的渲染配置（如 `settings_paradedb.conf`）、Casdoor 渲染的 `app.conf`（位于 `data/<INSTANCE_NAME>_config/`）、各服务的 `data/`。
 
 实例配置文件统一命名为 `settings_<服务名>.conf`（如 `settings_openwebui.conf`、`settings_paradedb.conf`），模板同步命名为 `templates/settings_<服务名>.conf.tpl`。被上层委托的依赖渲染出的配置（如 casdoor 目录下的 `settings_paradedb.conf`）正是该依赖自身的 `settings_<服务名>.conf`，天然符合此约定。
@@ -32,7 +32,7 @@
 容器编排全部使用原生 docker run，不依赖 docker compose，按服务复杂度分两类：
 
 - 单容器服务：直接用原生 `docker run` 管理，只需装了 `docker`。容器配置（端口、挂载、环境变量、`--network`、`--restart`）直接写在 `cli.sh` 的 `do_start` 里。范例：`deploy_apps/openwebui`。
-- 自带依赖的集合服务：主体 + 一个或多个附带依赖时，用 docker run + 委托式级联组装（见第 6 节）。附带依赖的拉起、组网与转发等特殊操作集中在该服务的 `hooks.sh`：其 `on_start` 创建 app 级 user-defined network，把附带容器 `docker network connect` 进来按容器名互通，并通过 `HOOK_RUN_ARGS` 把 `--network` 传给 `cli.sh` 的 `docker run`。范例：`deploy_apps/casdoor`（casdoor + 附带 paradedb）、`deploy_apps/lobechat`（LobeChat + 级联 paradedb/redis/rustfs 与同级 casdoor）。
+- 自带依赖的集合服务：主体 + 一个或多个附带依赖时，用 docker run + 委托式级联组装（见第 6 节）。附带依赖的拉起、组网与转发等特殊操作集中在该服务的 `hooks.sh`：其 `on_start` 创建 app 级 user-defined network，把附带容器 `docker network connect` 进来按容器名互通，并通过 `HOOK_RUN_ARGS` 把 `--network` 传给 `cli.sh` 的 `docker run`。范例：`deploy_apps/casdoor`（casdoor + 附带 paradedb）、`deploy_apps/lobechat`（LobeHub + 同机 ParadeDB，使用内置邮箱密码登录）。
 
 reason why 偏向 docker run：
 
@@ -40,7 +40,7 @@ reason why 偏向 docker run：
 - 更透明、可复现：启动命令就摆在 `cli.sh` 里。想手动调试时，照着 `source settings_<服务名>.conf` 后直接 `docker run` 即可，行为与脚本一致。
 - 去除渲染脆弱性：无需 `compose.yml.tpl`，少一层 `sed` 模板渲染。
 
-注意：项目已全面去除 docker compose，不再使用 `compose.yml` / `compose.yml.tpl`；所有服务（含多依赖的 lobechat）都用 docker run + 委托式级联。
+注意：项目已全面去除 docker compose，不再使用 `compose.yml` / `compose.yml.tpl`；所有服务（含附带数据库的 lobechat）都用 docker run + 委托式级联。
 
 ## 4. 配置注入：source + -e 透传，不用 --env-file
 
@@ -78,7 +78,7 @@ reason why：
 
 - 渲染：上层在自身目录下渲染底层配置（如 `settings_paradedb.conf`），随后 `bash ../../deploy_services/paradedb/cli.sh <cmd> --conf <该配置> --name <上层实例名>_paradedb`。
 - 生命周期：上层在 `hooks.sh` 的 `on_init/on_start/on_stop/on_rm/on_purge` 中把对应命令逐条转发给底层，保证级联整体的幂等与一致清理。
-- 动态容器网络：上层 `hooks.sh` 的 `on_start` 经 `lib/network.sh` 创建一个专属该实例的动态隔离网络（`${INSTANCE_NAME}_net`），把底层容器连接进来，二者按容器名无缝直连。这从根本上绕开了通过 host-gateway 或暴露宿主机端口时极易被系统防火墙拦截导致的连接超时问题。基础服务自身保持网络无关——它的 `settings_<服务名>.conf` 不固化网络名，由上层负责动态组网。
+- 动态容器网络：上层 `hooks.sh` 的 `on_start` 经 `shared_scripts/network.sh` 创建一个专属该实例的动态隔离网络（`${INSTANCE_NAME}_net`），把底层容器连接进来，二者按容器名无缝直连。这从根本上绕开了通过 host-gateway 或暴露宿主机端口时极易被系统防火墙拦截导致的连接超时问题。基础服务自身保持网络无关——它的 `settings_<服务名>.conf` 不固化网络名，由上层负责动态组网。
 
 reason why 委托而非 compose：底层逻辑只在一处维护（基础服务的 `cli.sh`），上层零重复；同时延续“单容器优先 docker run”，避免为附带一个依赖就引入 compose。
 

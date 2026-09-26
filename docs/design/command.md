@@ -7,7 +7,7 @@
 脚本工具的设计基于以下核心理念：
 - 目录即服务 (Service as a Directory)：服务的运维脚本、配置、数据目录均内聚在同一文件夹下，拷贝目录即带走该服务全部资产。
 - 纯 docker run 派发：不再依赖 docker compose，所有服务的生命周期均通过原生 docker run 管理。
-- 职责分层 (Separation by File)：cli.sh 只保留最基础的生命周期骨架与本服务的 docker run；服务专属的特殊操作（级联依赖、附属配置渲染、组网）下沉到同目录可选的 hooks.sh；跨服务复用的选配能力（如容器网络）抽到项目级共享库 lib/。三者解耦，使简单服务保持极简，复杂服务的复杂度被隔离在 hooks.sh 中。
+- 职责分层 (Separation by File)：cli.sh 只保留最基础的生命周期骨架与本服务的 docker run；服务专属的特殊操作（级联依赖、附属配置渲染、组网）下沉到同目录可选的 hooks.sh；跨服务复用的选配能力（如容器网络）抽到项目级共享库 shared_scripts/。三者解耦，使简单服务保持极简，复杂服务的复杂度被隔离在 hooks.sh 中。
 - 委托式级联 (Delegated Cascade)：复合服务将底层基础服务的 cli.sh 视作函数进行调用，通过参数隔离不同上层的实例数据。
 - 配置与数据分离：脚本本身无状态，运行期的全部配置落盘到 settings_<服务名>.conf，所有数据固化在 data 目录，确保销毁容器不丢数据。
 
@@ -17,7 +17,7 @@
 
 - cli.sh（必选，统一骨架）：服务的唯一操作入口与控制接口。承担参数解析、路径锚定、本服务 settings_<服务名>.conf 的渲染（generate_settings）、五个标准生命周期命令（init/start/stop/rm/purge）与 up 组合糖，以及本服务自身的 docker run。docker run 留在 cli.sh，允许各服务存在细微差异（镜像名、端口、挂载、`-e` 列表不同）。cli.sh 在各生命周期点被动回调 hooks.sh 中定义的同名钩子。
 - hooks.sh（可选，服务特殊操作）：仅当服务有专属的特殊操作时才存在（典型为复合服务）。集中存放级联依赖的拉起与转发、附属配置（如 Casdoor 的 app.conf）的渲染、专属组网与依赖健康等待等，通过 on_init / on_start / on_stop / on_rm / on_purge / on_network 等钩子暴露，由 cli.sh 被动调用；未定义的钩子自动跳过。无特殊操作的基础服务（如 paradedb）不需要此文件。
-- lib/*.sh（选配，项目级共享库）：跨服务复用的通用能力，目前为 lib/network.sh（容器网络的创建、连接、删除、查看）。由用到该能力的 hooks.sh 通过相对路径 source。其路径与项目仓库路径绑定，作为约定不注入到各服务目录内；仅依赖单目录自包含的简单服务本就不引用共享库。
+- shared_scripts/*.sh（选配，项目级共享库）：跨服务复用的通用能力，目前为 shared_scripts/network.sh（容器网络的创建、连接、删除、查看）。由用到该能力的 hooks.sh 通过相对路径 source。其路径与项目仓库路径绑定，作为约定不注入到各服务目录内；仅依赖单目录自包含的简单服务本就不引用共享库。
 
 钩子契约：
 - cli.sh 顶部 `[ -f "$SCRIPT_DIR/hooks.sh" ] && source "$SCRIPT_DIR/hooks.sh"`，并定义 `hook() { if declare -F "$1" >/dev/null; then "$1"; fi; }`。
@@ -133,7 +133,7 @@ esac
 
 部分特定场景使用或具有特殊约定的命令与参数：
 
-- network：代理命令，仅当服务在 hooks.sh 中定义了 on_network 时才生效（即含底层依赖级联、需要专属网络的复合服务）。cli.sh 检测到 on_network 后将其暴露，常用 `bash cli.sh network ls` 经 lib/network.sh 展示该实例的专属网络及已连接的容器；单体独立应用未定义则回落到 help。
+- network：代理命令，仅当服务在 hooks.sh 中定义了 on_network 时才生效（即含底层依赖级联、需要专属网络的复合服务）。cli.sh 检测到 on_network 后将其暴露，常用 `bash cli.sh network ls` 经 shared_scripts/network.sh 展示该实例的专属网络及已连接的容器；单体独立应用未定义则回落到 help。
 - help：缺省或未知参数时触发，打印各命令的简短说明及用法。
 - 钩子 (on_init / on_start / on_stop / on_rm / on_purge / on_network)：并非用户直接调用的命令，而是 cli.sh 在对应生命周期点被动回调 hooks.sh 中的同名函数，用于挂载服务专属的特殊操作（见第 2 节）。
 - 级联嵌入参数 (--conf, --name)：附加在基础服务的任意生命周期命令后，可指定被嵌入实例的配置位置与实例名。这改变了命令作用的目标实例而不改变命令语义，如 bash deploy_services/paradedb/cli.sh start --conf ../settings_paradedb.conf。

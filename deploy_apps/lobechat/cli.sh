@@ -33,7 +33,25 @@ hook() { if declare -F "$1" >/dev/null; then "$1"; fi; }
 # -----------------------------------------------------------------------------
 hr() { echo "-----------------------------------------------------------------------------"; }
 random_port() { shuf -i 30000-40000 -n 1; }
-random_secret() { openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32; }
+random_secret() { openssl rand -base64 32; }
+
+generate_jwks() {
+    if command -v node >/dev/null 2>&1; then
+        node "$SCRIPT_DIR/generate-jwks.cjs"
+    else
+        # Reuse the app image for a one-off key generator; no extra service/image.
+        docker run --rm -i --network none --entrypoint node "$IMAGE" - < "$SCRIPT_DIR/generate-jwks.cjs"
+    fi
+}
+
+load_conf() {
+    require_conf
+    source "$CONF_FILE"
+    if [ "${USE_INTERNAL_DB+x}" = x ] || [ "${USE_INTERNAL_CASDOOR+x}" = x ]; then
+        echo "[ERROR] Legacy full-stack config detected. Use a new directory with --conf for the minimal deployment; see docs/deploy_apps/lobechat.md." >&2
+        return 1
+    fi
+}
 
 container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
 
@@ -44,133 +62,89 @@ require_conf() {
     fi
 }
 
-# Read one value from a delegated service's config without clobbering our own vars
-conf_val() { ( . "$1" >/dev/null 2>&1; printf '%s' "${!2:-}" ); }
-
 # -----------------------------------------------------------------------------
 # 3. Service Config Rendering
 # -----------------------------------------------------------------------------
 generate_settings() {
-    local port=$(random_port)
-    local vault_sec=$(random_secret)
-    local auth_sec=$(random_secret)
-    local name="$NAME_OVERRIDE"
+    local port vault_sec auth_sec jwks name
+    port=$(random_port)
+    vault_sec=$(random_secret)
+    auth_sec=$(random_secret)
+    jwks=$(generate_jwks)
+    name="$NAME_OVERRIDE"
     if [ -z "$name" ]; then
-        local ts=$(date +%s)
+        local ts
+        ts=$(date +%s)
         name="lobechat_${ts: -4}"
     fi
+    if [[ ! "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
+        echo "[ERROR] Invalid container name: $name" >&2
+        return 1
+    fi
 
-    sed -e "s/{{INSTANCE_NAME}}/${name}/g" \
-        -e "s/{{LOBECHAT_PORT}}/${port}/g" \
-        -e "s/{{KEY_VAULTS_SECRET}}/${vault_sec}/g" \
-        -e "s/{{AUTH_SECRET}}/${auth_sec}/g" \
-        "$TPL_DIR/settings_lobechat.conf.tpl" > "$CONF_FILE"
+    # Base64 secrets contain '/', so use '|' as the sed delimiter.
+    ( umask 077
+      sed -e "s|{{INSTANCE_NAME}}|${name}|g" \
+          -e "s|{{LOBECHAT_PORT}}|${port}|g" \
+          -e "s|{{KEY_VAULTS_SECRET}}|${vault_sec}|g" \
+          -e "s|{{AUTH_SECRET}}|${auth_sec}|g" \
+          -e "s|{{JWKS_KEY}}|${jwks}|g" \
+          "$TPL_DIR/settings_lobechat.conf.tpl" > "$CONF_FILE"
+    )
 }
 
 # -----------------------------------------------------------------------------
 # 4. Lifecycle Functions (do_xxx)
 # -----------------------------------------------------------------------------
 do_init() {
-    hr
-    echo "[INFO] [LobeChat Stack] Initializing full-stack configuration..."
-    hr
-
-    [ ! -f "$CONF_FILE" ] && generate_settings
-    source "$CONF_FILE"
+    if [ ! -f "$CONF_FILE" ]; then generate_settings; fi
+    load_conf
     hook on_init
-
-    hr
-    echo "[SUCCESS] LobeChat Stack initialization completed!"
-    hr
-    echo "[IMPORTANT] Since SSO is enabled, LobeChat needs Casdoor Client ID."
-    echo "Recommended next steps:"
-    echo "  1. Review settings_lobechat.conf"
-    echo "  2. Run 'bash cli.sh start' to bring up all services"
-    echo "  3. LobeChat might report an auth error initially - this is normal"
-    echo "  4. Login to Casdoor Admin UI, create an application for LobeChat"
-    echo "  5. Set CASDOOR_CLIENT_ID / CASDOOR_CLIENT_SECRET in settings_lobechat.conf"
-    echo "  6. Recreate the app to apply auth: 'bash cli.sh rm && bash cli.sh start'"
-    hr
+    echo "[SUCCESS] Minimal LobeHub configuration is ready."
+    echo "Set APP_URL in $CONF_FILE to your browser-facing URL, then run 'bash cli.sh start'."
+    echo "Register with email/password on the login page. No Casdoor or SMTP is required."
 }
 
 do_start() {
-    require_conf
-    set -a; source "$CONF_FILE"; set +a
-
+    load_conf
+    if [ -z "${APP_URL:-}" ] || [ -z "${JWKS_KEY:-}" ] || [ -z "${KEY_VAULTS_SECRET:-}" ] || [ -z "${AUTH_SECRET:-}" ]; then
+        echo "[ERROR] APP_URL, JWKS_KEY, KEY_VAULTS_SECRET and AUTH_SECRET are required." >&2
+        return 1
+    fi
     hook on_start
 
-    # Resolve connection settings: internal => reach bundled containers by name on $net
-    local db_url redis_url s3_endpoint s3_bucket s3_ak s3_sk casdoor_issuer casdoor_id casdoor_secret
-    if [ "${USE_INTERNAL_DB:-true}" = "true" ]; then
-        db_url="postgresql://$(conf_val "$PG_CONF" DB_USER):$(conf_val "$PG_CONF" DB_PASSWORD)@${INSTANCE_NAME}_paradedb:5432/$(conf_val "$PG_CONF" DB_NAME)"
-    else
-        db_url="postgresql://${EXTERNAL_DB_USER:-postgres}:${EXTERNAL_DB_PASSWORD:-}@${EXTERNAL_DB_HOST:-}:${EXTERNAL_DB_PORT:-5432}/${EXTERNAL_DB_NAME:-lobechat}"
-    fi
-    if [ "${USE_INTERNAL_REDIS:-true}" = "true" ]; then
-        redis_url="redis://${INSTANCE_NAME}_redis:6379"
-    else
-        redis_url="${EXTERNAL_REDIS_URL:-}"
-    fi
-    if [ "${USE_INTERNAL_S3:-true}" = "true" ]; then
-        s3_endpoint="http://${INSTANCE_NAME}_rustfs:9000"
-        s3_bucket="${S3_BUCKET:-lobechat}"
-        s3_ak="$(conf_val "$RUSTFS_CONF" RUSTFS_ACCESS_KEY)"
-        s3_sk="$(conf_val "$RUSTFS_CONF" RUSTFS_SECRET_KEY)"
-    else
-        s3_endpoint="${EXTERNAL_S3_ENDPOINT:-}"; s3_bucket="${EXTERNAL_S3_BUCKET:-lobechat}"
-        s3_ak="${EXTERNAL_S3_ACCESS_KEY:-}"; s3_sk="${EXTERNAL_S3_SECRET_KEY:-}"
-    fi
-    if [ "${USE_INTERNAL_CASDOOR:-true}" = "true" ]; then
-        casdoor_issuer="http://${CASDOOR_PUBLIC_HOST:-localhost}:$(conf_val "$CASDOOR_CONF" CASDOOR_PORT)"
-        casdoor_id="${CASDOOR_CLIENT_ID:-}"
-        casdoor_secret="${CASDOOR_CLIENT_SECRET:-}"
-    else
-        casdoor_issuer="${EXTERNAL_CASDOOR_ISSUER:-}"
-        casdoor_id="${EXTERNAL_CASDOOR_ID:-}"
-        casdoor_secret="${EXTERNAL_CASDOOR_SECRET:-}"
-    fi
+    local db_url
+    db_url="postgresql://$(conf_val "$PG_CONF" DB_USER):$(conf_val "$PG_CONF" DB_PASSWORD)@$(conf_val "$PG_CONF" INSTANCE_NAME):5432/$(conf_val "$PG_CONF" DB_NAME)"
 
-    mkdir -p "${CONF_DIR}/data/${INSTANCE_NAME}_data"
-
-    hr
-    echo "[INFO] Starting LobeChat core application (Container: ${INSTANCE_NAME})..."
-    hr
     if container_exists; then
-        echo "[INFO] Container '${INSTANCE_NAME}' already exists, starting it..."
+        echo "[INFO] Starting existing container '$INSTANCE_NAME' (configuration unchanged)."
         docker start "$INSTANCE_NAME" >/dev/null
     else
         docker run -d \
             --name "$INSTANCE_NAME" \
             "${HOOK_RUN_ARGS[@]}" \
             -p "${LOBECHAT_PORT}:3210" \
-            -v "${CONF_DIR}/data/${INSTANCE_NAME}_data:/app/data" \
             -e "DATABASE_URL=${db_url}" \
+            -e "DATABASE_DRIVER=node" \
+            -e "APP_URL=${APP_URL}" \
             -e "INTERNAL_APP_URL=http://localhost:3210" \
             -e "KEY_VAULTS_SECRET=${KEY_VAULTS_SECRET}" \
             -e "AUTH_SECRET=${AUTH_SECRET}" \
-            -e "S3_ENDPOINT=${s3_endpoint}" \
-            -e "S3_BUCKET=${s3_bucket}" \
-            -e "S3_ACCESS_KEY_ID=${s3_ak}" \
-            -e "S3_SECRET_ACCESS_KEY=${s3_sk}" \
-            -e "S3_ENABLE_PATH_STYLE=1" \
-            -e "LLM_VISION_IMAGE_USE_BASE64=1" \
-            -e "REDIS_URL=${redis_url}" \
-            -e "REDIS_PREFIX=${INSTANCE_NAME}" \
-            -e "AUTH_SSO_PROVIDERS=casdoor" \
-            -e "AUTH_CASDOOR_ISSUER=${casdoor_issuer}" \
-            -e "AUTH_CASDOOR_ID=${casdoor_id}" \
-            -e "AUTH_CASDOOR_SECRET=${casdoor_secret}" \
+            -e "JWKS_KEY=${JWKS_KEY}" \
+            -e "AUTH_SSO_PROVIDERS=" \
+            -e "AUTH_DISABLE_EMAIL_PASSWORD=0" \
+            -e "AUTH_EMAIL_VERIFICATION=0" \
+            -e "AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:-}" \
             --restart unless-stopped \
             "$IMAGE" >/dev/null
     fi
-    hr
-    echo "[SUCCESS] LobeChat Stack is up and running! Port: $LOBECHAT_PORT"
-    hr
+    echo "[INFO] LobeHub container started: $APP_URL"
+    echo "Check database migration and readiness: docker logs -f $INSTANCE_NAME"
+    echo "Text chat only: file uploads and knowledge-base attachments require S3."
 }
 
 do_stop() {
-    require_conf
-    source "$CONF_FILE"
+    load_conf
     hr
     echo "[INFO] Stopping LobeChat Stack..."
     hr
@@ -179,8 +153,7 @@ do_stop() {
 }
 
 do_rm() {
-    require_conf
-    source "$CONF_FILE"
+    load_conf
     hr
     echo "[INFO] Removing LobeChat Stack containers..."
     hr
@@ -190,8 +163,7 @@ do_rm() {
 }
 
 do_purge() {
-    require_conf
-    source "$CONF_FILE"
+    load_conf
     hr
     echo "[WARN] WARNING: Preparing to completely destroy LobeChat Stack data!"
     hr
@@ -212,8 +184,8 @@ do_purge() {
 
 do_reset() {
     do_purge
-    echo "[INFO] Removing all generated settings under this service..."
-    rm -f "$CONF_DIR"/settings*.conf
+    echo "[INFO] Removing app and bundled DB settings..."
+    rm -f "$CONF_FILE" "$PG_CONF"
     hr
     echo "[SUCCESS] LobeChat Stack reset complete (restored to pristine source files)."
     hr
@@ -221,17 +193,17 @@ do_reset() {
 
 do_help() {
     echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME]"
-    echo "  init    : Generate settings_lobechat.conf and initialize bundled dependencies, without starting"
-    echo "  start   : Start dependencies then the LobeChat container (pure docker run, no compose)"
+    echo "  init    : Generate app/DB settings and keys (Node.js, or one-off app container)"
+    echo "  start   : Start bundled Postgres and LobeHub (two containers, no compose)"
     echo "  up      : Initialize configs and start containers instantly"
     echo "  stop    : Stop running containers"
     echo "  rm      : Remove containers (Preserves ./data and configs)"
     echo "  purge   : DANGER - Remove containers AND permanently delete ./data (Preserves configs)"
-    echo "  reset   : DANGER - purge AND delete ALL settings (back to pristine source files)"
+    echo "  reset   : DANGER - purge AND delete app/DB settings"
     echo ""
-    echo "Internal vs external dependencies are toggled by USE_INTERNAL_* in settings_lobechat.conf."
-    echo "Bundled paradedb/redis/rustfs are delegated via --conf (settings_*.conf live here);"
-    echo "casdoor is a sibling app that self-bundles its own DB and keeps config in its own dir."
+    echo "Minimal Server DB deployment: bundled ParadeDB + built-in email/password login."
+    echo "No external DB, Casdoor, Redis, RustFS or S3 configuration."
+    echo "With Node.js installed, init needs no Docker; otherwise it uses the app image once."
 }
 
 # -----------------------------------------------------------------------------
@@ -240,11 +212,11 @@ do_help() {
 case "$COMMAND" in
     init)    do_init ;;
     start)   do_start ;;
-    up)      do_init && do_start ;;
+    up)      do_init; do_start ;;
     stop)    do_stop ;;
     rm)      do_rm ;;
     purge)   do_purge ;;
     reset)   do_reset ;;
-    network) if declare -F on_network >/dev/null; then require_conf; source "$CONF_FILE"; on_network "${EXTRA_ARGS[@]}"; else do_help; fi ;;
+    network) if declare -F on_network >/dev/null; then load_conf; on_network "${EXTRA_ARGS[@]}"; else do_help; fi ;;
     *)       do_help ;;
 esac

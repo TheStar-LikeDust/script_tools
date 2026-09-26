@@ -141,7 +141,7 @@ docker network rm "${INSTANCE_NAME}_net"
 
 #### network ls
 
-经 `lib/network.sh` 展示该实例的专属网络及已连接的容器。
+经 `shared_scripts/network.sh` 展示该实例的专属网络及已连接的容器。
 
 #### 无参 / 未知参数
 
@@ -151,4 +151,4 @@ docker network rm "${INSTANCE_NAME}_net"
 
 - 镜像版本：当前固定 `calciumion/new-api:latest`，需可复现可锁定具体标签。
 - 多节点 / 高级参数：`SESSION_SECRET`、`NODE_NAME`、`STREAMING_TIMEOUT` 等官方可选环境变量未收录，单机部署不需要；如有需求可在 `cli.sh` 的 `docker run` 中追加 `-e` 项。
-- 依赖 repo 结构：通过相对路径 `../../deploy_services/paradedb`、`../../deploy_services/redis` 与 `../../lib/network.sh` 定位共享脚本；newapi 目录里的配置与数据是可随目录迁移的资产，整体搬迁请连同 repo 一起。
+- 依赖 repo 结构：通过相对路径 `../../deploy_services/paradedb`、`../../deploy_services/redis` 与 `../../shared_scripts/network.sh` 定位共享脚本；newapi 目录里的配置与数据是可随目录迁移的资产，整体搬迁请连同 repo 一起。

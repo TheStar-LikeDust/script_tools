@@ -5,7 +5,7 @@
 # Sourced into cli.sh, so it shares its variables (SCRIPT_DIR, CONF_DIR,
 # INSTANCE_NAME, HOOK_RUN_ARGS, ...) and utility functions.
 
-source "$SCRIPT_DIR/../../lib/network.sh"
+source "$SCRIPT_DIR/../../shared_scripts/network.sh"
 
 # -----------------------------------------------------------------------------
 # Helpers

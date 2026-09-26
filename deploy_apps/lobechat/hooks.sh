@@ -1,90 +1,52 @@
 #!/usr/bin/env bash
 
-source "$SCRIPT_DIR/../../lib/network.sh"
+source "$SCRIPT_DIR/../../shared_scripts/network.sh"
 
 PARADEDB_CLI="$SCRIPT_DIR/../../deploy_services/paradedb/cli.sh"
-REDIS_CLI="$SCRIPT_DIR/../../deploy_services/redis/cli.sh"
-RUSTFS_CLI="$SCRIPT_DIR/../../deploy_services/rustfs/cli.sh"
-CASDOOR_CLI="$SCRIPT_DIR/../casdoor/cli.sh"
-
 PG_CONF="$CONF_DIR/settings_paradedb.conf"
-REDIS_CONF="$CONF_DIR/settings_redis.conf"
-RUSTFS_CONF="$CONF_DIR/settings_rustfs.conf"
-CASDOOR_CONF="$CONF_DIR/../casdoor/settings_casdoor.conf"
 
 deploy_paradedb() { local sub="$1"; shift; bash "$PARADEDB_CLI" "$sub" --conf "$PG_CONF" "$@"; }
-deploy_redis()    { local sub="$1"; shift; bash "$REDIS_CLI" "$sub" --conf "$REDIS_CONF" "$@"; }
-deploy_rustfs()   { local sub="$1"; shift; bash "$RUSTFS_CLI" "$sub" --conf "$RUSTFS_CONF" "$@"; }
-deploy_casdoor()  { local sub="$1"; shift; bash "$CASDOOR_CLI" "$sub" "$@"; }
-
 conf_val() { ( . "$1" >/dev/null 2>&1; printf '%s' "${!2:-}" ); }
 
 wait_pg() {
     local name="$1"
-    echo "[INFO] [LobeChat] Waiting for bundled DB ($name) to become healthy..."
+    echo "[INFO] [LobeHub] Waiting for bundled DB ($name)..."
     for _ in $(seq 1 30); do
         if [ "$(docker inspect -f '{{.State.Health.Status}}' "$name" 2>/dev/null || true)" = "healthy" ]; then
             return 0
         fi
         sleep 2
     done
-    echo "[WARN] [LobeChat] DB not healthy after ~60s; continuing anyway."
+    echo "[ERROR] Database not healthy after ~60s. Inspect: docker logs $name" >&2
+    return 1
 }
 
 on_init() {
-    if [ "$USE_INTERNAL_DB" = "true" ]; then deploy_paradedb init --name "${INSTANCE_NAME}_paradedb" >/dev/null; fi
-    if [ "$USE_INTERNAL_REDIS" = "true" ]; then deploy_redis init --name "${INSTANCE_NAME}_redis" >/dev/null; fi
-    if [ "$USE_INTERNAL_S3" = "true" ]; then deploy_rustfs init --name "${INSTANCE_NAME}_rustfs" >/dev/null; fi
-    if [ "$USE_INTERNAL_CASDOOR" = "true" ]; then deploy_casdoor init >/dev/null; fi
+    local new_db=false
+    [ -f "$PG_CONF" ] || new_db=true
+    deploy_paradedb init --name "${INSTANCE_NAME}_paradedb" >/dev/null
+    if [ "$new_db" = true ]; then
+        # The app reaches Postgres through the private Docker network.
+        sed -i 's/^DB_PUBLISH_PORT=.*/DB_PUBLISH_PORT="false"/' "$PG_CONF"
+    fi
 }
 
 on_start() {
+    if [ ! -f "$PG_CONF" ]; then
+        echo "[ERROR] Missing bundled DB config. Run 'bash cli.sh init' first." >&2
+        return 1
+    fi
     local net="${INSTANCE_NAME}_net"
+    local db_name
+    db_name="$(conf_val "$PG_CONF" INSTANCE_NAME)"
     net_ensure "$net"
-
-    echo "[INFO] Starting bundled base services and attaching to ${net}..."
-    if [ "$USE_INTERNAL_DB" = "true" ]; then
-        deploy_paradedb start
-        net_connect "$net" "${INSTANCE_NAME}_paradedb"
-        wait_pg "${INSTANCE_NAME}_paradedb"
-    fi
-    if [ "$USE_INTERNAL_REDIS" = "true" ]; then
-        deploy_redis start
-        net_connect "$net" "${INSTANCE_NAME}_redis"
-    fi
-    if [ "$USE_INTERNAL_S3" = "true" ]; then
-        deploy_rustfs start
-        net_connect "$net" "${INSTANCE_NAME}_rustfs"
-    fi
-    if [ "$USE_INTERNAL_CASDOOR" = "true" ]; then
-        deploy_casdoor start
-        net_connect "$net" "$(conf_val "$CASDOOR_CONF" INSTANCE_NAME)"
-    fi
-
+    deploy_paradedb start
+    net_connect "$net" "$db_name"
+    wait_pg "$db_name"
     HOOK_RUN_ARGS=(--network "$net")
 }
 
-on_stop() {
-    [ "$USE_INTERNAL_CASDOOR" = "true" ] && deploy_casdoor stop || true
-    [ "$USE_INTERNAL_S3" = "true" ] && deploy_rustfs stop || true
-    [ "$USE_INTERNAL_REDIS" = "true" ] && deploy_redis stop || true
-    [ "$USE_INTERNAL_DB" = "true" ] && deploy_paradedb stop || true
-}
-
-on_rm() {
-    [ "$USE_INTERNAL_CASDOOR" = "true" ] && deploy_casdoor rm || true
-    [ "$USE_INTERNAL_S3" = "true" ] && deploy_rustfs rm || true
-    [ "$USE_INTERNAL_REDIS" = "true" ] && deploy_redis rm || true
-    [ "$USE_INTERNAL_DB" = "true" ] && deploy_paradedb rm || true
-    net_rm "${INSTANCE_NAME}_net"
-}
-
-on_purge() {
-    [ "$USE_INTERNAL_CASDOOR" = "true" ] && deploy_casdoor purge || true
-    [ "$USE_INTERNAL_S3" = "true" ] && deploy_rustfs purge || true
-    [ "$USE_INTERNAL_REDIS" = "true" ] && deploy_redis purge || true
-    [ "$USE_INTERNAL_DB" = "true" ] && deploy_paradedb purge || true
-    net_rm "${INSTANCE_NAME}_net"
-}
-
+on_stop() { deploy_paradedb stop; }
+on_rm() { deploy_paradedb rm; net_rm "${INSTANCE_NAME}_net"; }
+on_purge() { deploy_paradedb purge; net_rm "${INSTANCE_NAME}_net"; }
 on_network() { net_ls "${INSTANCE_NAME}_net"; }

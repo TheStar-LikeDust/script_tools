@@ -110,10 +110,14 @@ do_start() {
         echo "[INFO] Container '${INSTANCE_NAME}' already exists, starting it..."
         docker start "$INSTANCE_NAME" >/dev/null
     else
+        local port_args=()
+        if [ "${DB_PUBLISH_PORT:-true}" = "true" ]; then
+            port_args=(-p "${DB_PORT}:5432")
+        fi
         docker run -d \
             --name "$INSTANCE_NAME" \
             "${HOOK_RUN_ARGS[@]}" \
-            -p "${DB_PORT}:5432" \
+            "${port_args[@]}" \
             -v "${CONF_DIR}/data/${INSTANCE_NAME}_data:/var/lib/postgresql/data" \
             -e POSTGRES_USER="$DB_USER" \
             -e POSTGRES_PASSWORD="$DB_PASSWORD" \
@@ -123,12 +127,15 @@ do_start() {
             --health-timeout 5s \
             --health-retries 5 \
             --restart unless-stopped \
-            "$IMAGE" >/dev/null
+            "$IMAGE" -c shared_preload_libraries=pg_search >/dev/null
     fi
     hr
     echo "[SUCCESS] [ParadeDB] Service is up and running!"
-    echo "Connection: postgresql://${DB_USER}:${DB_PASSWORD}@<SERVER_IP>:${DB_PORT}/${DB_NAME}"
-    echo "Local: psql -h localhost -p ${DB_PORT} -U ${DB_USER} -d ${DB_NAME}"
+    if [ "${DB_PUBLISH_PORT:-true}" = "true" ]; then
+        echo "Local: psql -h localhost -p ${DB_PORT} -U ${DB_USER} -d ${DB_NAME}"
+    else
+        echo "PostgreSQL is available only through Docker networks (no host port)."
+    fi
     hr
 }
 

@@ -164,7 +164,7 @@ docker network rm "${INSTANCE_NAME}_net"
 
 #### network ls
 
-经 `lib/network.sh` 展示该实例的专属网络及已连接的容器。
+经 `shared_scripts/network.sh` 展示该实例的专属网络及已连接的容器。
 
 #### 无参 / 未知参数
 
@@ -175,4 +175,4 @@ docker network rm "${INSTANCE_NAME}_net"
 - 镜像版本：当前固定 `weishaw/sub2api:latest`，需可复现可锁定具体标签。
 - 数据库选型：官方 compose 使用 `postgres:18-alpine`，本项目复用 `deploy_services/paradedb`（PostgreSQL 兼容）以统一依赖；如需严格对齐官方镜像，可另行替换底层依赖。
 - 环境变量：`settings_sub2api.conf` 收录了较完整的可选项（Gemini OAuth、URL 白名单、网关并发等），默认值与官方 compose 一致，无需即可保持默认。
-- 依赖 repo 结构：通过相对路径 `../../deploy_services/paradedb`、`../../deploy_services/redis` 与 `../../lib/network.sh` 定位共享脚本；sub2api 目录里的配置与数据是可随目录迁移的资产，整体搬迁请连同 repo 一起。
+- 依赖 repo 结构：通过相对路径 `../../deploy_services/paradedb`、`../../deploy_services/redis` 与 `../../shared_scripts/network.sh` 定位共享脚本；sub2api 目录里的配置与数据是可随目录迁移的资产，整体搬迁请连同 repo 一起。

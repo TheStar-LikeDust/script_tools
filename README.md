@@ -15,7 +15,7 @@
 
 本项目将部署逻辑分为三层：
 - **`deploy_services/` (基础部署)**：原子的、可独立运行的服务组件（如 paradedb, rustfs, redis）。
-- **`deploy_apps/` (复合应用)**：按用途划分的应用层组件（如 lobechat 全栈【暂时终止开发】、openwebui、casdoor、newapi、sub2api），可组合多个基础服务实现一键部署。
+- **`deploy_apps/` (复合应用)**：按用途划分的应用层组件（如 lobechat 最小数据库版、openwebui、casdoor、newapi、sub2api），可组合多个基础服务实现一键部署。
 - **`tools/` (宿主机工具)**：用于存放宿主机（非 Docker 级别的）环境配置和开发工具（如 code-server、nginx 反代网关、docker 宿主机配置 ufw-docker 等）。
 
 > **深入了解底层实现？**
@@ -175,6 +175,6 @@ docker ps -a --filter name=<INSTANCE_NAME>
 
 ## 已知 TODO / 个人待优化的清单
 
-### 项目目录整体比较乱
-
-### 容器/网络/数据目录命名不统一
+- 增加更新镜像并重启的命令
+- 增加一键关闭并清除已有数据的命令
+- 命名优化(持续)
