@@ -9,11 +9,13 @@ shift || true
 
 CONF_FILE=""
 NAME_OVERRIDE=""
+INTERNAL_ONLY=false
 EXTRA_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --conf) CONF_FILE="$2"; shift 2 ;;
         --name) NAME_OVERRIDE="$2"; shift 2 ;;
+        --internal) INTERNAL_ONLY=true; shift ;;
         *) EXTRA_ARGS+=("$1"); shift ;;
     esac
 done
@@ -37,11 +39,46 @@ random_secret() { openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32; }
 
 container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
 
+rustfs_uid_gid() (
+    local probe_name passwd_dir passwd_file uid_gid
+    probe_name="rustfs_uid_probe_$$"
+    passwd_dir="$(mktemp -d)"
+    passwd_file="$passwd_dir/passwd"
+    trap 'docker rm -f "$probe_name" >/dev/null 2>&1 || true; rm -f "$passwd_file"; rmdir "$passwd_dir" 2>/dev/null || true' EXIT
+
+    if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+        docker pull "$IMAGE" >/dev/null
+    fi
+    docker create --name "$probe_name" "$IMAGE" >/dev/null
+    docker cp "$probe_name:/etc/passwd" "$passwd_file" >/dev/null
+    uid_gid="$(awk -F: '$1 == "rustfs" { print $3 ":" $4; exit }' "$passwd_file")"
+    if [ -z "$uid_gid" ]; then
+        echo "[ERROR] [RustFS] Could not resolve the UID/GID for image user 'rustfs'." >&2
+        return 1
+    fi
+    printf '%s' "$uid_gid"
+)
+
+ensure_data_owner() {
+    local data_dir="$1" uid_gid current_owner
+    uid_gid="$(rustfs_uid_gid)"
+    current_owner="$(stat -c '%u:%g' "$data_dir")"
+    if [ "$current_owner" != "$uid_gid" ]; then
+        echo "[INFO] [RustFS] Setting data directory ownership to $uid_gid."
+        chown -R "$uid_gid" "$data_dir"
+    fi
+}
+
+normalize_conf() {
+    sed -i 's/\r$//' "$CONF_FILE"
+}
+
 require_conf() {
     if [ ! -f "$CONF_FILE" ]; then
         echo "[ERROR] [RustFS] $CONF_FILE not found. Run 'bash cli.sh init' first."
         exit 1
     fi
+    normalize_conf
 }
 
 # -----------------------------------------------------------------------------
@@ -75,6 +112,7 @@ do_init() {
     hr
 
     [ ! -f "$CONF_FILE" ] && generate_settings
+    normalize_conf
     source "$CONF_FILE"
     hook on_init
 
@@ -96,6 +134,12 @@ do_start() {
     # Export all settings so 'docker run -e VAR' passes them through cleanly
     set -a; source "$CONF_FILE"; set +a
     mkdir -p "${CONF_DIR}/data/${INSTANCE_NAME}_data"
+    ensure_data_owner "${CONF_DIR}/data/${INSTANCE_NAME}_data"
+
+    local -a publish_args=()
+    if [ "$INTERNAL_ONLY" = false ]; then
+        publish_args=(-p "${RUSTFS_PORT}:9000" -p "${RUSTFS_ADMIN_PORT}:9001")
+    fi
 
     hook on_start
 
@@ -109,8 +153,7 @@ do_start() {
         docker run -d \
             --name "$INSTANCE_NAME" \
             "${HOOK_RUN_ARGS[@]}" \
-            -p "${RUSTFS_PORT}:9000" \
-            -p "${RUSTFS_ADMIN_PORT}:9001" \
+            "${publish_args[@]}" \
             -v "${CONF_DIR}/data/${INSTANCE_NAME}_data:/data" \
             -e RUSTFS_CONSOLE_ENABLE="true" \
             -e RUSTFS_ACCESS_KEY \
@@ -125,10 +168,17 @@ do_start() {
     fi
     hr
     echo "[SUCCESS] [RustFS] Service is up and running!"
-    echo "S3 API:  http://<SERVER_IP>:${RUSTFS_PORT}"
-    echo "Console: http://<SERVER_IP>:${RUSTFS_ADMIN_PORT} (local: http://localhost:${RUSTFS_ADMIN_PORT})"
-    echo "Access Key: ${RUSTFS_ACCESS_KEY}"
-    echo "Secret Key: ${RUSTFS_SECRET_KEY}"
+    if [ "$INTERNAL_ONLY" = true ]; then
+        echo "S3 API and console are not published to host ports."
+    else
+        echo "S3 API:  http://<SERVER_IP>:${RUSTFS_PORT}"
+        echo "Console: http://<SERVER_IP>:${RUSTFS_ADMIN_PORT} (local: http://localhost:${RUSTFS_ADMIN_PORT})"
+        echo "Access Key: ${RUSTFS_ACCESS_KEY}"
+        echo "Secret Key: ${RUSTFS_SECRET_KEY}"
+    fi
+    if [ "$INTERNAL_ONLY" = true ]; then
+        echo "Credentials are stored in $CONF_FILE."
+    fi
     hr
 }
 
@@ -188,7 +238,7 @@ do_reset() {
 }
 
 do_help() {
-    echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME]"
+    echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME] [--internal]"
     echo "  init    : Generate settings_rustfs.conf and create data dir, without starting"
     echo "  start   : Start the container (run if absent, otherwise just start it)"
     echo "  up      : Initialize config and start the container instantly"
@@ -201,6 +251,7 @@ do_help() {
     echo "  --conf PATH : Config file location (default: <script_dir>/settings_rustfs.conf)."
     echo "                Data dir is derived as <dir-of-conf>/data/<INSTANCE_NAME>_data."
     echo "  --name NAME : Full instance name to write at init (default: auto 'rustfs_<ts>')."
+    echo "  --internal  : Do not publish the S3 API or admin console host ports."
 }
 
 # -----------------------------------------------------------------------------

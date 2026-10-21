@@ -4,7 +4,7 @@
 
 > RustFS 是一款高性能、兼容 Amazon S3 的对象存储服务器，常用于存储业务文件、用户上传的头像、知识库等大型非结构化数据。
 
-单容器即可独立运行并内建 Web 控制台。为了清晰的权限隔离，容器运行时将 S3 API 的读写端口与 Admin 管理界面的端口分离暴露。作为基础存储，支持通过 `--conf` 和 `--name` 参数作为子组件被上层应用嵌入实现数据的独立挂靠。
+单容器即可独立运行并内建 Web 控制台。为了清晰的权限隔离，容器运行时将 S3 API 的读写端口与 Admin 管理界面的端口分离暴露。作为基础存储，支持通过 `--conf` 和 `--name` 参数作为子组件被上层应用嵌入实现数据的独立挂靠；嵌入式部署可加 `--internal`，不向宿主机发布端口。
 
 ## 2. 核心配置项
 
@@ -18,7 +18,8 @@
 
 ## 3. 备注
 
-- 不提供初始存储桶：本服务仅提供底层的 S3 对象存储实例，启动后默认没有任何 Bucket。对接应用时需人工登录 Admin 控制台或通过业务代码创建所需 Bucket 后方可读写。
+- 不提供初始存储桶：本服务独立启动后默认没有任何 Bucket。对接应用时需人工登录 Admin 控制台或通过业务代码创建所需 Bucket；嵌入 LobeChat 时由 LobeChat 启动流程自动创建。
+- `start` 会从 RustFS 镜像读取内置 `rustfs` 用户的 UID/GID，并在数据目录属主不匹配时自动修正目录及已有文件的所有权。部署脚本需有权限执行 `chown`；无需手动更改目录权限或以 root 运行 RustFS。
 
 ## 4. 快速执行
 
@@ -31,6 +32,9 @@ bash cli.sh start
 
 # 一键拉起（跳过配置直接启动）
 bash cli.sh up
+
+# 作为其他应用的私有存储服务，不发布宿主机端口
+bash cli.sh start --conf /path/to/settings_rustfs.conf --internal
 
 # 停止运行
 bash cli.sh stop
@@ -116,4 +120,5 @@ rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data"
 
 - 镜像版本：当前固定 `rustfs/rustfs:latest`。若需可复现部署，可锁定到更具体的版本标签。
 - 控制台访问：启动后打开 `http://<服务器IP>:<RUSTFS_ADMIN_PORT>`，用 Access Key / Secret Key 登录，可视化创建 Bucket 与对象。
-- 可选的建桶命令：目前不提供自动建桶，将来可能会增加一次性的临时容器跑 `mc` 命令建桶支持。
+- 独立启动时不自动创建 Bucket；嵌入 LobeChat 时由应用启动流程创建并复用 Bucket。
+- 使用 `--internal` 时不会发布 S3 API 和管理控制台端口，仅同一 Docker 网络中的容器可访问。

@@ -6,8 +6,15 @@
 # Create the app's user-defined network if it does not exist yet
 net_ensure() { docker network inspect "$1" >/dev/null 2>&1 || docker network create "$1" >/dev/null; }
 
-# Attach a container to the app network (idempotent, never fails the caller)
-net_connect() { docker network connect "$1" "$2" 2>/dev/null || true; }
+# Attach a container to the app network, preserving idempotency and surfacing errors
+net_connect() {
+    local net="$1" container="$2" connected
+    connected="$(docker network inspect "$net" --format '{{range .Containers}}{{.Name}} {{end}}')"
+    if [[ " $connected " == *" $container "* ]]; then
+        return 0
+    fi
+    docker network connect "$net" "$container" >/dev/null
+}
 
 # Remove the app network (idempotent)
 net_rm() { docker network rm "$1" 2>/dev/null || true; }

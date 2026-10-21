@@ -1,4 +1,4 @@
-# Minimal LobeHub Server DB deployment: app + bundled PostgreSQL.
+# LobeHub Server DB deployment: app + bundled PostgreSQL and RustFS.
 INSTANCE_NAME="{{INSTANCE_NAME}}"
 LOBECHAT_PORT="{{LOBECHAT_PORT}}"
 IMAGE="lobehub/lobehub:latest"
@@ -15,3 +15,7 @@ JWKS_KEY='{{JWKS_KEY}}'
 # Built-in email/password login, without SMTP or email verification.
 # Optional registration allowlist: your email or domain; empty allows everyone.
 AUTH_ALLOWED_EMAILS=""
+
+# RustFS runs alongside LobeHub on its private Docker network.
+# Endpoint and credentials are generated from the bundled RustFS settings.
+S3_BUCKET="lobechat"

@@ -1,77 +1,197 @@
-# LobeHub 最小数据库版部署
+# LobeHub 部署 (Deploy)
 
-使用官方 `lobehub/lobehub:latest` 镜像，保留目录名 `lobechat`。常驻容器只有两个：LobeHub 和同机自动管理的 ParadeDB（PostgreSQL 17）。
+## 1. 简介
 
-当前 LobeHub 2.x 只支持 Server DB，官方镜像没有可替代 PostgreSQL 的内置 SQLite/PGlite。本方案无需自行准备远程数据库，但 PostgreSQL 仍是一个独立容器。
+> LobeHub 是 AI 对话与知识库应用。本方案部署官方 LobeHub 镜像，并在专属 Docker 网络中管理 ParadeDB（PostgreSQL 17）和 RustFS。
 
-不启动 Casdoor、Redis、RustFS，不配置 S3。使用 Better Auth 自带的邮箱密码注册/登录，不启用邮箱验证，无需 SMTP。未配置 SMTP 时不能通过邮件找回密码。
+使用 LobeHub 内置邮箱密码认证，并自动部署 RustFS 提供 S3 兼容存储。无需手动填写 S3 地址、访问密钥或创建 Bucket；未配置 SMTP 时不能通过邮件找回密码。
 
-此配置用于先跑通文字聊天。文件/图片上传、知识库附件和其他依赖对象存储的功能暂不可用；不会自动改用 `/app/data` 存储附件。模型服务商及 API Key 在登录后配置。
+## 2. 核心配置项
 
-## 快速启动
+### settings_lobechat.conf
 
-要求 Linux Docker 环境及 Bash、OpenSSL 等常见命令。生成 JWKS 使用 Node.js 内置 crypto；宿主机没有 Node.js 时，脚本会临时运行同一个 LobeHub 镜像生成密钥，完成后自动删除该临时容器，不增加常驻服务。
+- `INSTANCE_NAME`：LobeHub 容器名。
+- `LOBECHAT_PORT`：宿主机访问端口。
+- `IMAGE`：LobeHub 镜像，默认 `lobehub/lobehub:latest`。
+- `APP_URL`：浏览器访问应用时使用的完整地址；反向代理场景填写代理后的 HTTPS 地址。
+- `KEY_VAULTS_SECRET`、`AUTH_SECRET`、`JWKS_KEY`：应用加密与认证密钥；备份时需与数据库一并保留。
+- `AUTH_ALLOWED_EMAILS`：可选的邮箱或域名注册允许列表；留空时允许所有邮箱注册。
+- `S3_BUCKET`：RustFS 中供 LobeHub 使用的 Bucket，默认 `lobechat`；启动时自动创建。
+- `S3_ENDPOINT`、`S3_ACCESS_KEY_ID`、`S3_SECRET_ACCESS_KEY`：由启动脚本从 RustFS 配置生成并传入容器，无需手动设置。
+
+### settings_paradedb.conf
+
+- `INSTANCE_NAME`：PostgreSQL 容器名。
+- `DB_USER`、`DB_PASSWORD`、`DB_NAME`：数据库连接凭据。
+- `DB_PUBLISH_PORT`：新实例默认设为 `false`，数据库只通过专属 Docker 网络访问。
+- `DB_PORT`：宿主机数据库端口；仅在启用端口发布时使用。
+
+数据库数据保存在配置文件目录下的 `data/<数据库容器名>_data/`。
+
+RustFS 配置保存在同目录的 `settings_rustfs.conf`，其中包含生成的访问密钥；对象数据保存在对应的 `data/<RustFS容器名>_data/`。旧版 `settings_<LobeHub实例名>_rustfs.conf` 会在首次生命周期操作时迁移为固定文件名，保留原有凭据、容器名和数据目录。
+
+## 3. 备注
+
+- 官方数据库部署示例使用 ParadeDB PostgreSQL 17 镜像，并在 PostgreSQL 启动时启用 `pg_search`。本脚本以容器名生成 `DATABASE_URL`，不向宿主机发布数据库端口。
+- `init` 会生成应用密钥、ParadeDB 配置和 RustFS 配置。宿主机需有 Node.js 以生成 JWKS；没有 Node.js 时，脚本使用 LobeHub 镜像临时生成密钥。
+- ParadeDB 与 RustFS 配置含访问凭据，脚本将其权限设为仅当前用户读写。备份时同时保留应用配置、数据库配置、RustFS 配置及二者的数据目录。
+- 首次访问时自行注册邮箱密码账户，不会预建管理员。公网部署前应设置 `AUTH_ALLOWED_EMAILS` 限制注册。
+- `start` 自动启动私有 RustFS，按镜像内置用户修正数据目录所有权，并通过一次性 `minio/mc` 容器创建或复用 Bucket；RustFS API 和管理端口不会发布到宿主机。
+- 若已有 LobeHub 容器的 S3 环境变量与新配置不符，`start` 会重建应用容器以应用 RustFS 设置，数据库和 RustFS 数据不受影响。
+- `rm` 删除容器但保留数据库和 RustFS 数据；`purge` 会永久删除数据库及 RustFS 对象数据；`reset` 还会删除生成的应用、数据库和 RustFS 配置。
+- 旧全栈配置中的 `USE_INTERNAL_*` / `EXTERNAL_*` 不兼容当前配置。切换方案会创建新数据库，不会迁移旧账户和聊天记录，也不会停止或删除旧 Casdoor、Redis、RustFS 容器及数据。
+
+## 4. 快速执行
 
 ```bash
 cd deploy_apps/lobechat
 bash cli.sh init
-# 编辑 settings_lobechat.conf，将 APP_URL 设为浏览器实际使用的完整地址
-# 例如 http://服务器IP:生成的端口，或反向代理后的 https://chat.example.com
+# 修改 settings_lobechat.conf 中的 APP_URL
+# 公网部署时按需设置 AUTH_ALLOWED_EMAILS
 bash cli.sh start
 ```
 
-默认 `APP_URL=http://localhost:随机端口` 适合本机访问或同端口 SSH 转发。公网使用前可将 `AUTH_ALLOWED_EMAILS` 填为自己的邮箱，限制注册；为空时允许所有邮箱注册。首次打开页面自行注册邮箱密码账户，不会预建管理员。
+`up` 等价于依次执行 `init` 和 `start`，适合已确认配置的实例。应用启动后可通过 `docker logs -f <INSTANCE_NAME>` 查看数据库迁移和服务就绪日志。
 
-`bash cli.sh up` 等于依次执行 `init` 和 `start`，适合已配置好地址的实例。
+## 5. 命令解释
 
-启动命令返回只表示容器已启动；用 `docker logs -f <INSTANCE_NAME>` 确认数据库迁移通过和应用就绪，再验证注册、登录及文字聊天。数据库健康检查超时会中止应用启动。
+#### init
 
-## 配置与数据
-
-- `settings_lobechat.conf`：实例名、宿主机端口、`IMAGE`、`APP_URL`、`KEY_VAULTS_SECRET`、`AUTH_SECRET`、`JWKS_KEY`、可选 `AUTH_ALLOWED_EMAILS`。
-- `settings_paradedb.conf`：随应用生成的本地数据库配置；新实例设置 `DB_PUBLISH_PORT=false`，不暴露数据库宿主机端口。
-- `data/<数据库实例名>_data/`：PostgreSQL 持久化数据，保存用户、聊天记录等。
-
-重复 `init` 保留已有配置和密钥。备份应同时保留数据库与配置，尤其不要重新生成已有实例的 `KEY_VAULTS_SECRET`。LobeHub 应用容器本身不挂载无实际用途的 `/app/data`。
-
-ParadeDB 启动时显式传入 `-c shared_preload_libraries=pg_search`，应用通过专属 Docker 网络连接它。
-
-## 生命周期
+生成应用密钥、ParadeDB 配置和 RustFS 配置，不启动容器。
 
 ```bash
-bash cli.sh stop     # 停止应用和数据库
-bash cli.sh start    # 启动现有容器；不应用新环境变量，也不自动拉取镜像
-bash cli.sh rm       # 删除应用和数据库容器，保留配置与数据库数据
-bash cli.sh network  # 查看专属网络
-bash cli.sh purge    # 危险：删除应用、数据库容器及其数据，保留配置
-bash cli.sh reset    # 危险：purge 后再删除这两个服务的配置
+[ ! -f "$CONF_FILE" ] && generate_settings
+load_conf
+hook on_init
+ensure_rustfs_conf
 ```
 
-修改应用环境变量后，仅重建应用即可：
+#### start
+
+先启动 ParadeDB 和 RustFS 并接入专属网络，等待健康检查后自动创建 Bucket，再创建或启动 LobeHub。
+
+```bash
+net_ensure "$net"
+deploy_paradedb start
+net_connect "$net" "$db_name"
+wait_healthy "database" "$db_name"
+
+ensure_rustfs_conf
+rustfs_conf="$(rustfs_conf_path)"
+rustfs_name="$(conf_val "$rustfs_conf" INSTANCE_NAME)"
+deploy_rustfs start --internal
+net_connect "$net" "$rustfs_name"
+wait_healthy "RustFS" "$rustfs_name"
+access_key="$(conf_val "$rustfs_conf" RUSTFS_ACCESS_KEY)"
+secret_key="$(conf_val "$rustfs_conf" RUSTFS_SECRET_KEY)"
+S3_ENDPOINT="http://${rustfs_name}:9000"
+S3_BUCKET="${S3_BUCKET:-lobechat}"
+S3_ACCESS_KEY_ID="$access_key"
+S3_SECRET_ACCESS_KEY="$secret_key"
+ensure_s3_bucket "$net" "$rustfs_name" "$S3_BUCKET" "$access_key" "$secret_key"
+HOOK_RUN_ARGS=(--network "$net")
+
+db_url="postgres://$(conf_val "$PG_CONF" DB_USER):$(conf_val "$PG_CONF" DB_PASSWORD)@$(conf_val "$PG_CONF" INSTANCE_NAME):5432/$(conf_val "$PG_CONF" DB_NAME)"
+
+docker run -d \
+    --name "$INSTANCE_NAME" \
+    "${HOOK_RUN_ARGS[@]}" \
+    -p "${LOBECHAT_PORT}:3210" \
+    -e "DATABASE_URL=${db_url}" \
+    -e "APP_URL=${APP_URL}" \
+    -e "INTERNAL_APP_URL=http://localhost:3210" \
+    -e "KEY_VAULTS_SECRET=${KEY_VAULTS_SECRET}" \
+    -e "AUTH_SECRET=${AUTH_SECRET}" \
+    -e "JWKS_KEY=${JWKS_KEY}" \
+    -e "AUTH_SSO_PROVIDERS=" \
+    -e "AUTH_DISABLE_EMAIL_PASSWORD=0" \
+    -e "AUTH_EMAIL_VERIFICATION=0" \
+    -e "AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:-}" \
+    -e "S3_ENDPOINT=${S3_ENDPOINT}" \
+    -e "S3_BUCKET=${S3_BUCKET}" \
+    -e "S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}" \
+    -e "S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}" \
+    -e "S3_ENABLE_PATH_STYLE=1" \
+    --restart unless-stopped \
+    "$IMAGE"
+```
+
+#### up
+
+初始化配置后启动应用、数据库和 RustFS。
+
+```bash
+do_init
+do_start
+```
+
+#### stop
+
+停止 LobeHub、ParadeDB 和 RustFS 容器，保留配置与数据。
+
+```bash
+docker stop "$INSTANCE_NAME" 2>/dev/null || true
+deploy_paradedb stop
+deploy_rustfs stop
+```
+
+#### rm
+
+删除应用、数据库和 RustFS 容器及专属网络，保留配置与数据。
+
+```bash
+docker stop "$INSTANCE_NAME" 2>/dev/null || true
+docker rm "$INSTANCE_NAME" 2>/dev/null || true
+deploy_paradedb rm
+deploy_rustfs rm
+net_rm "${INSTANCE_NAME}_net"
+```
+
+#### purge
+
+危险操作：删除应用、数据库和 RustFS 容器及其数据，保留配置文件。
+
+```bash
+docker stop "$INSTANCE_NAME" 2>/dev/null || true
+docker rm "$INSTANCE_NAME" 2>/dev/null || true
+data_dir="${CONF_DIR}/data/${INSTANCE_NAME}_data"
+if [ -d "$data_dir" ]; then
+    docker run --rm -v "${CONF_DIR}/data:/purge" alpine rm -rf "/purge/${INSTANCE_NAME}_data"
+fi
+deploy_paradedb purge
+deploy_rustfs purge
+net_rm "${INSTANCE_NAME}_net"
+```
+
+#### reset
+
+危险操作：先执行 `purge`，再删除应用、ParadeDB 和 RustFS 配置文件。
+
+```bash
+do_purge
+rm -f "$CONF_FILE" "$PG_CONF" "$(rustfs_conf_path)"
+```
+
+## 6. 升级与旧实例迁移
+
+更新应用环境变量或镜像前，先备份数据库。按需拉取新镜像，然后删除应用容器并重新执行 `start`；不要用 `purge` 或 `reset` 作为升级命令。
 
 ```bash
 source settings_lobechat.conf
-# 若还需要更新应用镜像，先备份数据库，再按需执行：docker pull "$IMAGE"
+docker pull "$IMAGE"
 docker stop "$INSTANCE_NAME"
 docker rm "$INSTANCE_NAME"
 bash cli.sh start
 ```
 
-`IMAGE` 可以改成经过验证的固定版本标签。单独拉取镜像不会更新已有容器。不要把 `purge` 或 `reset` 当作升级命令。
-
-## 已有旧版全栈实例
-
-旧版 `USE_INTERNAL_*` / `EXTERNAL_*` 配置不能直接用于这个最小方案，脚本会报错，避免将旧 SSO 账户和外部数据库悄悄切换为新实例。
-
-先使用独立目录试跑，不覆盖原配置或数据：
+旧版全栈实例应先使用独立的 `--conf` 路径试运行。新实例拥有独立数据库，账户与聊天记录不会自动迁移。
 
 ```bash
 mkdir -p minimal
 bash cli.sh init --conf "$PWD/minimal/settings_lobechat.conf" --name lobechat_minimal
-# 编辑 minimal/settings_lobechat.conf 中的 APP_URL
 bash cli.sh start --conf "$PWD/minimal/settings_lobechat.conf"
 ```
 
-这会创建一个全新的数据库，不迁移旧账户和聊天记录。旧 Casdoor、Redis、RustFS 的容器与数据不会被新脚本自动停止或删除。需要保留旧数据时，应另行备份和规划数据库/认证迁移。
+使用 `bash cli.sh network` 可查看应用专属网络及已连接容器。
 
-参考：[官方 Docker 部署](https://lobehub.com/docs/self-hosting/platform/docker)、[V2 变更](https://lobehub.com/docs/self-hosting/migration/v2/breaking-changes)、[认证变量](https://lobehub.com/docs/self-hosting/environment-variables/auth)。
+官方参考：[Docker 数据库版部署](https://lobehub.com/docs/self-hosting/platform/docker)、[认证环境变量](https://lobehub.com/docs/self-hosting/environment-variables/auth)。

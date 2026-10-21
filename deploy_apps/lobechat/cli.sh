@@ -36,12 +36,24 @@ random_port() { shuf -i 30000-40000 -n 1; }
 random_secret() { openssl rand -base64 32; }
 
 generate_jwks() {
+    local -a node_cmd
     if command -v node >/dev/null 2>&1; then
-        node "$SCRIPT_DIR/generate-jwks.cjs"
+        node_cmd=(node)
     else
         # Reuse the app image for a one-off key generator; no extra service/image.
-        docker run --rm -i --network none --entrypoint node "$IMAGE" - < "$SCRIPT_DIR/generate-jwks.cjs"
+        node_cmd=(docker run --rm -i --network none --entrypoint node "$IMAGE")
     fi
+    "${node_cmd[@]}" --input-type=commonjs - <<'JS'
+const { generateKeyPairSync, randomUUID } = require('node:crypto');
+const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const key = {
+  ...privateKey.export({ format: 'jwk' }),
+  alg: 'RS256',
+  use: 'sig',
+  kid: randomUUID(),
+};
+process.stdout.write(JSON.stringify({ keys: [key] }));
+JS
 }
 
 load_conf() {
@@ -54,6 +66,21 @@ load_conf() {
 }
 
 container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
+
+container_s3_config_matches() {
+    local current_env expected
+    current_env="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$INSTANCE_NAME")"
+    for expected in \
+        "S3_ENDPOINT=${S3_ENDPOINT}" \
+        "S3_BUCKET=${S3_BUCKET}" \
+        "S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}" \
+        "S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}" \
+        "S3_ENABLE_PATH_STYLE=1"; do
+        if ! printf '%s\n' "$current_env" | grep -Fqx -- "$expected"; then
+            return 1
+        fi
+    done
+}
 
 require_conf() {
     if [ ! -f "$CONF_FILE" ]; then
@@ -100,7 +127,7 @@ do_init() {
     if [ ! -f "$CONF_FILE" ]; then generate_settings; fi
     load_conf
     hook on_init
-    echo "[SUCCESS] Minimal LobeHub configuration is ready."
+    echo "[SUCCESS] LobeHub, database and RustFS configuration is ready."
     echo "Set APP_URL in $CONF_FILE to your browser-facing URL, then run 'bash cli.sh start'."
     echo "Register with email/password on the login page. No Casdoor or SMTP is required."
 }
@@ -114,18 +141,27 @@ do_start() {
     hook on_start
 
     local db_url
-    db_url="postgresql://$(conf_val "$PG_CONF" DB_USER):$(conf_val "$PG_CONF" DB_PASSWORD)@$(conf_val "$PG_CONF" INSTANCE_NAME):5432/$(conf_val "$PG_CONF" DB_NAME)"
+    db_url="postgres://$(conf_val "$PG_CONF" DB_USER):$(conf_val "$PG_CONF" DB_PASSWORD)@$(conf_val "$PG_CONF" INSTANCE_NAME):5432/$(conf_val "$PG_CONF" DB_NAME)"
 
+    local create_container=true
     if container_exists; then
-        echo "[INFO] Starting existing container '$INSTANCE_NAME' (configuration unchanged)."
-        docker start "$INSTANCE_NAME" >/dev/null
-    else
+        if container_s3_config_matches; then
+            echo "[INFO] Starting existing container '$INSTANCE_NAME'."
+            docker start "$INSTANCE_NAME" >/dev/null
+            net_connect "${INSTANCE_NAME}_net" "$INSTANCE_NAME"
+            create_container=false
+        else
+            echo "[INFO] Recreating '$INSTANCE_NAME' to apply the RustFS S3 configuration."
+            docker stop "$INSTANCE_NAME" >/dev/null 2>&1 || true
+            docker rm "$INSTANCE_NAME" >/dev/null
+        fi
+    fi
+    if [ "$create_container" = true ]; then
         docker run -d \
             --name "$INSTANCE_NAME" \
             "${HOOK_RUN_ARGS[@]}" \
             -p "${LOBECHAT_PORT}:3210" \
             -e "DATABASE_URL=${db_url}" \
-            -e "DATABASE_DRIVER=node" \
             -e "APP_URL=${APP_URL}" \
             -e "INTERNAL_APP_URL=http://localhost:3210" \
             -e "KEY_VAULTS_SECRET=${KEY_VAULTS_SECRET}" \
@@ -135,12 +171,17 @@ do_start() {
             -e "AUTH_DISABLE_EMAIL_PASSWORD=0" \
             -e "AUTH_EMAIL_VERIFICATION=0" \
             -e "AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:-}" \
+            -e "S3_ENDPOINT=${S3_ENDPOINT}" \
+            -e "S3_BUCKET=${S3_BUCKET}" \
+            -e "S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}" \
+            -e "S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}" \
+            -e "S3_ENABLE_PATH_STYLE=1" \
             --restart unless-stopped \
             "$IMAGE" >/dev/null
     fi
     echo "[INFO] LobeHub container started: $APP_URL"
+    echo "[INFO] S3 storage: ${S3_ENDPOINT}/${S3_BUCKET}"
     echo "Check database migration and readiness: docker logs -f $INSTANCE_NAME"
-    echo "Text chat only: file uploads and knowledge-base attachments require S3."
 }
 
 do_stop() {
@@ -184,8 +225,10 @@ do_purge() {
 
 do_reset() {
     do_purge
-    echo "[INFO] Removing app and bundled DB settings..."
-    rm -f "$CONF_FILE" "$PG_CONF"
+    echo "[INFO] Removing app, database and RustFS settings..."
+    local rustfs_conf
+    rustfs_conf="$(rustfs_conf_path)"
+    rm -f "$CONF_FILE" "$PG_CONF" "$rustfs_conf"
     hr
     echo "[SUCCESS] LobeChat Stack reset complete (restored to pristine source files)."
     hr
@@ -193,16 +236,16 @@ do_reset() {
 
 do_help() {
     echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME]"
-    echo "  init    : Generate app/DB settings and keys (Node.js, or one-off app container)"
-    echo "  start   : Start bundled Postgres and LobeHub (two containers, no compose)"
+    echo "  init    : Generate app/DB/RustFS settings and keys"
+    echo "  start   : Start bundled Postgres, RustFS and LobeHub (no compose)"
     echo "  up      : Initialize configs and start containers instantly"
     echo "  stop    : Stop running containers"
     echo "  rm      : Remove containers (Preserves ./data and configs)"
     echo "  purge   : DANGER - Remove containers AND permanently delete ./data (Preserves configs)"
-    echo "  reset   : DANGER - purge AND delete app/DB settings"
+    echo "  reset   : DANGER - purge AND delete app/DB/RustFS settings"
     echo ""
-    echo "Minimal Server DB deployment: bundled ParadeDB + built-in email/password login."
-    echo "No external DB, Casdoor, Redis, RustFS or S3 configuration."
+    echo "LobeHub Server DB deployment: bundled ParadeDB, RustFS and built-in email/password login."
+    echo "No external DB, Casdoor, Redis or S3-compatible storage is required."
     echo "With Node.js installed, init needs no Docker; otherwise it uses the app image once."
 }
 
