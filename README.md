@@ -31,16 +31,7 @@
 - `docs/design/core.md`：服务/目录的组织与部署设计（目录即服务、单容器优先用 docker run、`source + -e` 配置注入、实例命名、委托式级联与 `--conf`/`--name` 通用参数、app 级网络组装）。
 - `docs/design/document.md`：服务说明文档（`docs/{deploy_services,deploy_apps,tools}/*.md`，按脚本三层归位）的章节结构规范，以 `docs/deploy_apps/openwebui.md` 为模板。
 
-## 快速获取安装
-
-我们提供了从 GitHub 获取最新版本一键解包的引导命令，这会免去 `git clone` 的繁琐记录。在终端运行：
-
-> **TODO（发布前必改）**：`install.sh` 与下方命令中的 `YourName/YourRepo` 都是占位符，发布前必须替换成真实的 GitHub 仓库地址（同时确认 `install.sh` 顶部的 `GITHUB_REPO` 与 `VERSION`）。
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/YourName/YourRepo/main/install.sh)
-cd script_tools
-```
+## 部署场景
 
 ### 场景一：独立部署单个基础服务
 

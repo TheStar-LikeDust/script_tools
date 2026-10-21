@@ -34,6 +34,7 @@ hook() { if declare -F "$1" >/dev/null; then "$1"; fi; }
 hr() { echo "-----------------------------------------------------------------------------"; }
 random_port() { shuf -i 30000-40000 -n 1; }
 random_secret() { openssl rand -base64 32; }
+random_initial_email() { printf 'lobe-%s@example.invalid' "$(openssl rand -hex 8)"; }
 
 generate_jwks() {
     local -a node_cmd
@@ -67,7 +68,7 @@ load_conf() {
 
 container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
 
-container_s3_config_matches() {
+container_config_matches() {
     local current_env expected
     current_env="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$INSTANCE_NAME")"
     for expected in \
@@ -75,7 +76,15 @@ container_s3_config_matches() {
         "S3_BUCKET=${S3_BUCKET}" \
         "S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}" \
         "S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}" \
-        "S3_ENABLE_PATH_STYLE=1"; do
+        "S3_ENABLE_PATH_STYLE=1" \
+        "COMPOSIO_API_KEY=${COMPOSIO_API_KEY:-}" \
+        "AUTH_SSO_PROVIDERS=${AUTH_SSO_PROVIDERS:-}" \
+        "AUTH_CASDOOR_ID=${AUTH_CASDOOR_ID:-}" \
+        "AUTH_CASDOOR_SECRET=${AUTH_CASDOOR_SECRET:-}" \
+        "AUTH_CASDOOR_ISSUER=${AUTH_CASDOOR_ISSUER:-}" \
+        "AUTH_DISABLE_EMAIL_PASSWORD=0" \
+        "AUTH_EMAIL_VERIFICATION=0" \
+        "AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:-}"; do
         if ! printf '%s\n' "$current_env" | grep -Fqx -- "$expected"; then
             return 1
         fi
@@ -93,11 +102,12 @@ require_conf() {
 # 3. Service Config Rendering
 # -----------------------------------------------------------------------------
 generate_settings() {
-    local port vault_sec auth_sec jwks name
+    local port vault_sec auth_sec jwks initial_email name
     port=$(random_port)
     vault_sec=$(random_secret)
     auth_sec=$(random_secret)
     jwks=$(generate_jwks)
+    initial_email=$(random_initial_email)
     name="$NAME_OVERRIDE"
     if [ -z "$name" ]; then
         local ts
@@ -116,6 +126,7 @@ generate_settings() {
           -e "s|{{KEY_VAULTS_SECRET}}|${vault_sec}|g" \
           -e "s|{{AUTH_SECRET}}|${auth_sec}|g" \
           -e "s|{{JWKS_KEY}}|${jwks}|g" \
+          -e "s|{{AUTH_ALLOWED_EMAILS}}|${initial_email}|g" \
           "$TPL_DIR/settings_lobechat.conf.tpl" > "$CONF_FILE"
     )
 }
@@ -129,7 +140,8 @@ do_init() {
     hook on_init
     echo "[SUCCESS] LobeHub, database and RustFS configuration is ready."
     echo "Set APP_URL in $CONF_FILE to your browser-facing URL, then run 'bash cli.sh start'."
-    echo "Register with email/password on the login page. No Casdoor or SMTP is required."
+    echo "Replace the generated example.invalid AUTH_ALLOWED_EMAILS value before registering."
+    echo "Email/password login is enabled; Casdoor, Composio and SMTP are optional."
 }
 
 do_start() {
@@ -145,13 +157,13 @@ do_start() {
 
     local create_container=true
     if container_exists; then
-        if container_s3_config_matches; then
+        if container_config_matches; then
             echo "[INFO] Starting existing container '$INSTANCE_NAME'."
             docker start "$INSTANCE_NAME" >/dev/null
             net_connect "${INSTANCE_NAME}_net" "$INSTANCE_NAME"
             create_container=false
         else
-            echo "[INFO] Recreating '$INSTANCE_NAME' to apply the RustFS S3 configuration."
+            echo "[INFO] Recreating '$INSTANCE_NAME' to apply the configuration."
             docker stop "$INSTANCE_NAME" >/dev/null 2>&1 || true
             docker rm "$INSTANCE_NAME" >/dev/null
         fi
@@ -167,10 +179,14 @@ do_start() {
             -e "KEY_VAULTS_SECRET=${KEY_VAULTS_SECRET}" \
             -e "AUTH_SECRET=${AUTH_SECRET}" \
             -e "JWKS_KEY=${JWKS_KEY}" \
-            -e "AUTH_SSO_PROVIDERS=" \
+            -e "AUTH_SSO_PROVIDERS=${AUTH_SSO_PROVIDERS:-}" \
+            -e "AUTH_CASDOOR_ID=${AUTH_CASDOOR_ID:-}" \
+            -e "AUTH_CASDOOR_SECRET=${AUTH_CASDOOR_SECRET:-}" \
+            -e "AUTH_CASDOOR_ISSUER=${AUTH_CASDOOR_ISSUER:-}" \
             -e "AUTH_DISABLE_EMAIL_PASSWORD=0" \
             -e "AUTH_EMAIL_VERIFICATION=0" \
             -e "AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:-}" \
+            -e "COMPOSIO_API_KEY=${COMPOSIO_API_KEY:-}" \
             -e "S3_ENDPOINT=${S3_ENDPOINT}" \
             -e "S3_BUCKET=${S3_BUCKET}" \
             -e "S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}" \

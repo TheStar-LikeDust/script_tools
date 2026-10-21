@@ -13,8 +13,19 @@ AUTH_SECRET="{{AUTH_SECRET}}"
 JWKS_KEY='{{JWKS_KEY}}'
 
 # Built-in email/password login, without SMTP or email verification.
-# Optional registration allowlist: your email or domain; empty allows everyone.
-AUTH_ALLOWED_EMAILS=""
+# Replace the generated .invalid address with your email or domain before start.
+AUTH_ALLOWED_EMAILS="{{AUTH_ALLOWED_EMAILS}}"
+
+# Optional Composio integration. Leave empty when Composio is not used.
+COMPOSIO_API_KEY=""
+
+# Optional Casdoor OIDC integration. Leave AUTH_SSO_PROVIDERS empty to use only
+# email/password login. To enable Casdoor, set it to "casdoor" and fill all
+# three AUTH_CASDOOR_* values below.
+AUTH_SSO_PROVIDERS=""
+AUTH_CASDOOR_ID=""
+AUTH_CASDOOR_SECRET=""
+AUTH_CASDOOR_ISSUER=""
 
 # RustFS runs alongside LobeHub on its private Docker network.
 # Endpoint and credentials are generated from the bundled RustFS settings.

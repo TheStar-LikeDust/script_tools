@@ -4,7 +4,7 @@
 
 > LobeHub 是 AI 对话与知识库应用。本方案部署官方 LobeHub 镜像，并在专属 Docker 网络中管理 ParadeDB（PostgreSQL 17）和 RustFS。
 
-使用 LobeHub 内置邮箱密码认证，并自动部署 RustFS 提供 S3 兼容存储。无需手动填写 S3 地址、访问密钥或创建 Bucket；未配置 SMTP 时不能通过邮件找回密码。
+使用 LobeHub 内置邮箱密码认证，并自动部署 RustFS 提供 S3 兼容存储。无需手动填写 S3 地址、访问密钥或创建 Bucket；未配置 SMTP 时不能通过邮件找回密码。Composio 和 Casdoor 都是可选的外部服务。
 
 ## 2. 核心配置项
 
@@ -15,7 +15,10 @@
 - `IMAGE`：LobeHub 镜像，默认 `lobehub/lobehub:latest`。
 - `APP_URL`：浏览器访问应用时使用的完整地址；反向代理场景填写代理后的 HTTPS 地址。
 - `KEY_VAULTS_SECRET`、`AUTH_SECRET`、`JWKS_KEY`：应用加密与认证密钥；备份时需与数据库一并保留。
-- `AUTH_ALLOWED_EMAILS`：可选的邮箱或域名注册允许列表；留空时允许所有邮箱注册。
+- `AUTH_ALLOWED_EMAILS`：邮箱或域名注册允许列表；`init` 默认写入一个随机的 `example.invalid` 占位邮箱，启动前需替换为实际邮箱或域名。
+- `COMPOSIO_API_KEY`：可选的 Composio 服务端 API Key；不使用 Composio 时留空。
+- `AUTH_SSO_PROVIDERS`：可选的 SSO 提供商列表；留空时仅使用邮箱密码登录，启用 Casdoor 时填写 `casdoor`。
+- `AUTH_CASDOOR_ID`、`AUTH_CASDOOR_SECRET`、`AUTH_CASDOOR_ISSUER`：Casdoor OIDC 客户端 ID、密钥和 Issuer；仅在启用 Casdoor 时填写。
 - `S3_BUCKET`：RustFS 中供 LobeHub 使用的 Bucket，默认 `lobechat`；启动时自动创建。
 - `S3_ENDPOINT`、`S3_ACCESS_KEY_ID`、`S3_SECRET_ACCESS_KEY`：由启动脚本从 RustFS 配置生成并传入容器，无需手动设置。
 
@@ -35,9 +38,9 @@ RustFS 配置保存在同目录的 `settings_rustfs.conf`，其中包含生成�
 - 官方数据库部署示例使用 ParadeDB PostgreSQL 17 镜像，并在 PostgreSQL 启动时启用 `pg_search`。本脚本以容器名生成 `DATABASE_URL`，不向宿主机发布数据库端口。
 - `init` 会生成应用密钥、ParadeDB 配置和 RustFS 配置。宿主机需有 Node.js 以生成 JWKS；没有 Node.js 时，脚本使用 LobeHub 镜像临时生成密钥。
 - ParadeDB 与 RustFS 配置含访问凭据，脚本将其权限设为仅当前用户读写。备份时同时保留应用配置、数据库配置、RustFS 配置及二者的数据目录。
-- 首次访问时自行注册邮箱密码账户，不会预建管理员。公网部署前应设置 `AUTH_ALLOWED_EMAILS` 限制注册。
-- `start` 自动启动私有 RustFS，按镜像内置用户修正数据目录所有权，并通过一次性 `minio/mc` 容器创建或复用 Bucket；RustFS API 和管理端口不会发布到宿主机。
-- 若已有 LobeHub 容器的 S3 环境变量与新配置不符，`start` 会重建应用容器以应用 RustFS 设置，数据库和 RustFS 数据不受影响。
+- `init` 会生成随机的 `example.invalid` 白名单邮箱；邮箱密码登录仍然开启，但在你把它改成实际邮箱前不会允许真实账户注册。
+- `start` 自动启动私有 RustFS，按镜像内置用户修正数据目录所有权，并通过一次性 AWS CLI 容器创建或复用 Bucket；RustFS API 和管理端口不会发布到宿主机。
+- 若已有 LobeHub 容器的 S3、Composio 或认证环境变量与配置不符，`start` 会重建应用容器，数据库和 RustFS 数据不受影响。
 - `rm` 删除容器但保留数据库和 RustFS 数据；`purge` 会永久删除数据库及 RustFS 对象数据；`reset` 还会删除生成的应用、数据库和 RustFS 配置。
 - 旧全栈配置中的 `USE_INTERNAL_*` / `EXTERNAL_*` 不兼容当前配置。切换方案会创建新数据库，不会迁移旧账户和聊天记录，也不会停止或删除旧 Casdoor、Redis、RustFS 容器及数据。
 
@@ -47,7 +50,8 @@ RustFS 配置保存在同目录的 `settings_rustfs.conf`，其中包含生成�
 cd deploy_apps/lobechat
 bash cli.sh init
 # 修改 settings_lobechat.conf 中的 APP_URL
-# 公网部署时按需设置 AUTH_ALLOWED_EMAILS
+# 将 AUTH_ALLOWED_EMAILS 的 example.invalid 占位邮箱改成实际邮箱或域名
+# 按需填写 COMPOSIO_API_KEY 或 Casdoor 的 AUTH_* 配置
 bash cli.sh start
 ```
 
@@ -84,11 +88,12 @@ net_connect "$net" "$rustfs_name"
 wait_healthy "RustFS" "$rustfs_name"
 access_key="$(conf_val "$rustfs_conf" RUSTFS_ACCESS_KEY)"
 secret_key="$(conf_val "$rustfs_conf" RUSTFS_SECRET_KEY)"
-S3_ENDPOINT="http://${rustfs_name}:9000"
+rustfs_ip="$(docker inspect --format "{{(index .NetworkSettings.Networks \"$net\").IPAddress}}" "$rustfs_name")"
+S3_ENDPOINT="http://${rustfs_ip}:9000"
 S3_BUCKET="${S3_BUCKET:-lobechat}"
 S3_ACCESS_KEY_ID="$access_key"
 S3_SECRET_ACCESS_KEY="$secret_key"
-ensure_s3_bucket "$net" "$rustfs_name" "$S3_BUCKET" "$access_key" "$secret_key"
+ensure_s3_bucket "$net" "$S3_ENDPOINT" "$S3_BUCKET" "$access_key" "$secret_key"
 HOOK_RUN_ARGS=(--network "$net")
 
 db_url="postgres://$(conf_val "$PG_CONF" DB_USER):$(conf_val "$PG_CONF" DB_PASSWORD)@$(conf_val "$PG_CONF" INSTANCE_NAME):5432/$(conf_val "$PG_CONF" DB_NAME)"
@@ -103,10 +108,14 @@ docker run -d \
     -e "KEY_VAULTS_SECRET=${KEY_VAULTS_SECRET}" \
     -e "AUTH_SECRET=${AUTH_SECRET}" \
     -e "JWKS_KEY=${JWKS_KEY}" \
-    -e "AUTH_SSO_PROVIDERS=" \
+    -e "AUTH_SSO_PROVIDERS=${AUTH_SSO_PROVIDERS:-}" \
+    -e "AUTH_CASDOOR_ID=${AUTH_CASDOOR_ID:-}" \
+    -e "AUTH_CASDOOR_SECRET=${AUTH_CASDOOR_SECRET:-}" \
+    -e "AUTH_CASDOOR_ISSUER=${AUTH_CASDOOR_ISSUER:-}" \
     -e "AUTH_DISABLE_EMAIL_PASSWORD=0" \
     -e "AUTH_EMAIL_VERIFICATION=0" \
     -e "AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:-}" \
+    -e "COMPOSIO_API_KEY=${COMPOSIO_API_KEY:-}" \
     -e "S3_ENDPOINT=${S3_ENDPOINT}" \
     -e "S3_BUCKET=${S3_BUCKET}" \
     -e "S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}" \
