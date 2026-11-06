@@ -1,4 +1,4 @@
-# LobeHub Server DB deployment: app + bundled PostgreSQL and RustFS.
+# LobeHub Server DB deployment: app + bundled PostgreSQL, Redis and RustFS.
 INSTANCE_NAME="{{INSTANCE_NAME}}"
 LOBECHAT_PORT="{{LOBECHAT_PORT}}"
 IMAGE="lobehub/lobehub:latest"
@@ -26,6 +26,19 @@ AUTH_SSO_PROVIDERS=""
 AUTH_CASDOOR_ID=""
 AUTH_CASDOOR_SECRET=""
 AUTH_CASDOOR_ISSUER=""
+
+# OpenAI or an OpenAI-compatible third-party provider.
+# Set OPENAI_PROXY_URL to the provider's /v1 endpoint and adjust the model name.
+ENABLED_OPENAI="1"
+OPENAI_API_KEY=""
+OPENAI_PROXY_URL="https://api.openai.com/v1"
+OPENAI_MODEL_LIST="gpt-4o-mini"
+
+# Redis is generated and started as a bundled service on the private Docker network.
+# REDIS_URL is replaced at start with the bundled Redis container address.
+REDIS_URL=""
+REDIS_DATABASE="0"
+REDIS_PREFIX="lobechat"
 
 # RustFS runs alongside LobeHub on its private Docker network.
 # Endpoint and credentials are generated from the bundled RustFS settings.

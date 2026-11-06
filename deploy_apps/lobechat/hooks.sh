@@ -4,11 +4,15 @@ source "$SCRIPT_DIR/../../shared_scripts/network.sh"
 
 PARADEDB_CLI="$SCRIPT_DIR/../../deploy_services/paradedb/cli.sh"
 PG_CONF="$CONF_DIR/settings_paradedb.conf"
+REDIS_CLI="$SCRIPT_DIR/../../deploy_services/redis/cli.sh"
+REDIS_CONF="$CONF_DIR/settings_redis.conf"
 RUSTFS_CLI="$SCRIPT_DIR/../../deploy_services/rustfs/cli.sh"
 AWS_CLI_IMAGE="public.ecr.aws/aws-cli/aws-cli:latest"
 
 deploy_paradedb() { local sub="$1"; shift; bash "$PARADEDB_CLI" "$sub" --conf "$PG_CONF" "$@"; }
+deploy_redis() { local sub="$1"; shift; bash "$REDIS_CLI" "$sub" --conf "$REDIS_CONF" "$@"; }
 conf_val() { ( . "$1" >/dev/null 2>&1; printf '%s' "${!2:-}" ); }
+redis_instance_name() { printf '%s_redis' "$INSTANCE_NAME"; }
 rustfs_conf_path() { printf '%s/settings_rustfs.conf' "$CONF_DIR"; }
 legacy_rustfs_conf_path() { printf '%s/settings_%s_rustfs.conf' "$CONF_DIR" "$INSTANCE_NAME"; }
 rustfs_instance_name() { printf '%s_rustfs' "$INSTANCE_NAME"; }
@@ -37,6 +41,13 @@ ensure_rustfs_conf() {
         deploy_rustfs init --name "$(rustfs_instance_name)" >/dev/null
     fi
     chmod 600 "$rustfs_conf"
+}
+
+ensure_redis_conf() {
+    if [ ! -f "$REDIS_CONF" ]; then
+        deploy_redis init --name "$(redis_instance_name)" >/dev/null
+    fi
+    chmod 600 "$REDIS_CONF"
 }
 
 wait_healthy() {
@@ -77,6 +88,7 @@ on_init() {
     deploy_paradedb init --name "${INSTANCE_NAME}_paradedb" >/dev/null
     chmod 600 "$PG_CONF"
     ensure_rustfs_conf
+    ensure_redis_conf
     if [ "$new_db" = true ]; then
         # The app reaches Postgres through the private Docker network.
         sed -i 's/^DB_PUBLISH_PORT=.*/DB_PUBLISH_PORT="false"/' "$PG_CONF"
@@ -89,17 +101,23 @@ on_start() {
         return 1
     fi
     local net="${INSTANCE_NAME}_net" rustfs_conf rustfs_name access_key secret_key
+    local redis_name
     local db_name
     local rustfs_ip
     db_name="$(conf_val "$PG_CONF" INSTANCE_NAME)"
     ensure_rustfs_conf
+    ensure_redis_conf
     rustfs_conf="$(rustfs_conf_path)"
     rustfs_name="$(conf_val "$rustfs_conf" INSTANCE_NAME)"
+    redis_name="$(conf_val "$REDIS_CONF" INSTANCE_NAME)"
 
     net_ensure "$net"
     deploy_paradedb start
+    deploy_redis start
     net_connect "$net" "$db_name"
+    net_connect "$net" "$redis_name"
     wait_healthy "database" "$db_name"
+    wait_healthy "Redis" "$redis_name"
 
     deploy_rustfs start --internal
     net_connect "$net" "$rustfs_name"
@@ -119,17 +137,22 @@ on_start() {
     S3_SECRET_ACCESS_KEY="$secret_key"
     ensure_s3_bucket "$net" "$S3_ENDPOINT" "$S3_BUCKET" "$access_key" "$secret_key"
 
+    REDIS_DATABASE="${REDIS_DATABASE:-0}"
+    REDIS_PREFIX="${REDIS_PREFIX:-lobechat}"
+    REDIS_URL="redis://${redis_name}:6379/${REDIS_DATABASE}"
     HOOK_RUN_ARGS=(--network "$net")
 }
 
 on_stop() {
     deploy_paradedb stop
+    if [ -f "$REDIS_CONF" ]; then deploy_redis stop; fi
     migrate_rustfs_conf
     if [ -f "$(rustfs_conf_path)" ]; then deploy_rustfs stop; fi
 }
 
 on_rm() {
     deploy_paradedb rm
+    if [ -f "$REDIS_CONF" ]; then deploy_redis rm; fi
     migrate_rustfs_conf
     if [ -f "$(rustfs_conf_path)" ]; then deploy_rustfs rm; fi
     net_rm "${INSTANCE_NAME}_net"
@@ -137,6 +160,7 @@ on_rm() {
 
 on_purge() {
     deploy_paradedb purge
+    if [ -f "$REDIS_CONF" ]; then deploy_redis purge; fi
     migrate_rustfs_conf
     if [ -f "$(rustfs_conf_path)" ]; then deploy_rustfs purge; fi
     net_rm "${INSTANCE_NAME}_net"

@@ -84,7 +84,14 @@ container_config_matches() {
         "AUTH_CASDOOR_ISSUER=${AUTH_CASDOOR_ISSUER:-}" \
         "AUTH_DISABLE_EMAIL_PASSWORD=0" \
         "AUTH_EMAIL_VERIFICATION=0" \
-        "AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:-}"; do
+        "AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:-}" \
+        "ENABLED_OPENAI=${ENABLED_OPENAI:-1}" \
+        "OPENAI_API_KEY=${OPENAI_API_KEY:-}" \
+        "OPENAI_PROXY_URL=${OPENAI_PROXY_URL:-}" \
+        "OPENAI_MODEL_LIST=${OPENAI_MODEL_LIST:-}" \
+        "REDIS_URL=${REDIS_URL}" \
+        "REDIS_DATABASE=${REDIS_DATABASE:-0}" \
+        "REDIS_PREFIX=${REDIS_PREFIX:-lobechat}"; do
         if ! printf '%s\n' "$current_env" | grep -Fqx -- "$expected"; then
             return 1
         fi
@@ -138,8 +145,9 @@ do_init() {
     if [ ! -f "$CONF_FILE" ]; then generate_settings; fi
     load_conf
     hook on_init
-    echo "[SUCCESS] LobeHub, database and RustFS configuration is ready."
+    echo "[SUCCESS] LobeHub, database, Redis and RustFS configuration is ready."
     echo "Set APP_URL in $CONF_FILE to your browser-facing URL, then run 'bash cli.sh start'."
+    echo "Set OPENAI_API_KEY; for a third-party compatible service also set OPENAI_PROXY_URL and OPENAI_MODEL_LIST."
     echo "Replace the generated example.invalid AUTH_ALLOWED_EMAILS value before registering."
     echo "Email/password login is enabled; Casdoor, Composio and SMTP are optional."
 }
@@ -187,6 +195,13 @@ do_start() {
             -e "AUTH_EMAIL_VERIFICATION=0" \
             -e "AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:-}" \
             -e "COMPOSIO_API_KEY=${COMPOSIO_API_KEY:-}" \
+            -e "ENABLED_OPENAI=${ENABLED_OPENAI:-1}" \
+            -e "OPENAI_API_KEY=${OPENAI_API_KEY:-}" \
+            -e "OPENAI_PROXY_URL=${OPENAI_PROXY_URL:-}" \
+            -e "OPENAI_MODEL_LIST=${OPENAI_MODEL_LIST:-}" \
+            -e "REDIS_URL=${REDIS_URL}" \
+            -e "REDIS_DATABASE=${REDIS_DATABASE:-0}" \
+            -e "REDIS_PREFIX=${REDIS_PREFIX:-lobechat}" \
             -e "S3_ENDPOINT=${S3_ENDPOINT}" \
             -e "S3_BUCKET=${S3_BUCKET}" \
             -e "S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}" \
@@ -241,10 +256,11 @@ do_purge() {
 
 do_reset() {
     do_purge
-    echo "[INFO] Removing app, database and RustFS settings..."
-    local rustfs_conf
+    echo "[INFO] Removing app, database, Redis and RustFS settings..."
+    local rustfs_conf redis_conf
     rustfs_conf="$(rustfs_conf_path)"
-    rm -f "$CONF_FILE" "$PG_CONF" "$rustfs_conf"
+    redis_conf="$CONF_DIR/settings_redis.conf"
+    rm -f "$CONF_FILE" "$PG_CONF" "$redis_conf" "$rustfs_conf"
     hr
     echo "[SUCCESS] LobeChat Stack reset complete (restored to pristine source files)."
     hr
@@ -252,16 +268,16 @@ do_reset() {
 
 do_help() {
     echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME]"
-    echo "  init    : Generate app/DB/RustFS settings and keys"
-    echo "  start   : Start bundled Postgres, RustFS and LobeHub (no compose)"
+    echo "  init    : Generate app/DB/Redis/RustFS settings and keys"
+    echo "  start   : Start bundled Postgres, Redis, RustFS and LobeHub (no compose)"
     echo "  up      : Initialize configs and start containers instantly"
     echo "  stop    : Stop running containers"
     echo "  rm      : Remove containers (Preserves ./data and configs)"
     echo "  purge   : DANGER - Remove containers AND permanently delete ./data (Preserves configs)"
-    echo "  reset   : DANGER - purge AND delete app/DB/RustFS settings"
+    echo "  reset   : DANGER - purge AND delete app/DB/Redis/RustFS settings"
     echo ""
-    echo "LobeHub Server DB deployment: bundled ParadeDB, RustFS and built-in email/password login."
-    echo "No external DB, Casdoor, Redis or S3-compatible storage is required."
+    echo "LobeHub Server DB deployment: bundled ParadeDB, Redis, RustFS and built-in email/password login."
+    echo "OpenAI or an OpenAI-compatible provider is configured in settings_lobechat.conf."
     echo "With Node.js installed, init needs no Docker; otherwise it uses the app image once."
 }
 

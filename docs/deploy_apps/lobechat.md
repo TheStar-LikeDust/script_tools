@@ -2,9 +2,9 @@
 
 ## 1. 简介
 
-> LobeHub 是 AI 对话与知识库应用。本方案部署官方 LobeHub 镜像，并在专属 Docker 网络中管理 ParadeDB（PostgreSQL 17）和 RustFS。
+> LobeHub 是 AI 对话与知识库应用。本方案部署官方 LobeHub 镜像，并在专属 Docker 网络中管理 ParadeDB（PostgreSQL 17）、Redis 和 RustFS。
 
-使用 LobeHub 内置邮箱密码认证，并自动部署 RustFS 提供 S3 兼容存储。无需手动填写 S3 地址、访问密钥或创建 Bucket；未配置 SMTP 时不能通过邮件找回密码。Composio 和 Casdoor 都是可选的外部服务。
+使用 LobeHub 内置邮箱密码认证，并复用项目的 Redis 服务和 RustFS S3 兼容存储。无需手动填写 S3 地址、访问密钥或创建 Bucket；未配置 SMTP 时不能通过邮件找回密码。Composio 和 Casdoor 都是可选的外部服务。
 
 ## 2. 核心配置项
 
@@ -19,6 +19,11 @@
 - `COMPOSIO_API_KEY`：可选的 Composio 服务端 API Key；不使用 Composio 时留空。
 - `AUTH_SSO_PROVIDERS`：可选的 SSO 提供商列表；留空时仅使用邮箱密码登录，启用 Casdoor 时填写 `casdoor`。
 - `AUTH_CASDOOR_ID`、`AUTH_CASDOOR_SECRET`、`AUTH_CASDOOR_ISSUER`：Casdoor OIDC 客户端 ID、密钥和 Issuer；仅在启用 Casdoor 时填写。
+- `ENABLED_OPENAI`：是否启用 OpenAI 服务，默认 `1`。
+- `OPENAI_API_KEY`：OpenAI 或 OpenAI 兼容服务的 API Key。
+- `OPENAI_PROXY_URL`：OpenAI API 地址；使用第三方兼容服务时填写其可从 Docker 容器访问的 `/v1` 地址。
+- `OPENAI_MODEL_LIST`：启动时提供的模型列表，默认 `gpt-4o-mini`；使用其他模型时改为服务商支持的模型名。
+- `REDIS_DATABASE`、`REDIS_PREFIX`：Redis 数据库编号和键前缀。Redis 容器地址由启动脚本自动生成。
 - `S3_BUCKET`：RustFS 中供 LobeHub 使用的 Bucket，默认 `lobechat`；启动时自动创建。
 - `S3_ENDPOINT`、`S3_ACCESS_KEY_ID`、`S3_SECRET_ACCESS_KEY`：由启动脚本从 RustFS 配置生成并传入容器，无需手动设置。
 
@@ -29,19 +34,23 @@
 - `DB_PUBLISH_PORT`：新实例默认设为 `false`，数据库只通过专属 Docker 网络访问。
 - `DB_PORT`：宿主机数据库端口；仅在启用端口发布时使用。
 
+### settings_redis.conf
+
+由项目已有的 `deploy_services/redis` 服务管理。LobeChat 通过专属 Docker 网络以 `redis://<Redis容器名>:6379/<REDIS_DATABASE>` 连接；无需手动填写 Redis URL。
+
 数据库数据保存在配置文件目录下的 `data/<数据库容器名>_data/`。
 
-RustFS 配置保存在同目录的 `settings_rustfs.conf`，其中包含生成的访问密钥；对象数据保存在对应的 `data/<RustFS容器名>_data/`。旧版 `settings_<LobeHub实例名>_rustfs.conf` 会在首次生命周期操作时迁移为固定文件名，保留原有凭据、容器名和数据目录。
+Redis 数据保存在配置文件目录下的 `data/<Redis容器名>_data/`。RustFS 配置保存在同目录的 `settings_rustfs.conf`，其中包含生成的访问密钥；对象数据保存在对应的 `data/<RustFS容器名>_data/`。旧版 `settings_<LobeHub实例名>_rustfs.conf` 会在首次生命周期操作时迁移为固定文件名，保留原有凭据、容器名和数据目录。
 
 ## 3. 备注
 
 - 官方数据库部署示例使用 ParadeDB PostgreSQL 17 镜像，并在 PostgreSQL 启动时启用 `pg_search`。本脚本以容器名生成 `DATABASE_URL`，不向宿主机发布数据库端口。
-- `init` 会生成应用密钥、ParadeDB 配置和 RustFS 配置。宿主机需有 Node.js 以生成 JWKS；没有 Node.js 时，脚本使用 LobeHub 镜像临时生成密钥。
-- ParadeDB 与 RustFS 配置含访问凭据，脚本将其权限设为仅当前用户读写。备份时同时保留应用配置、数据库配置、RustFS 配置及二者的数据目录。
+- `init` 会生成应用密钥、ParadeDB、Redis 和 RustFS 配置。宿主机需有 Node.js 以生成 JWKS；没有 Node.js 时，脚本使用 LobeHub 镜像临时生成密钥。
+- ParadeDB、Redis 与 RustFS 配置由对应服务脚本管理。备份时同时保留应用配置、数据库配置、Redis 配置、RustFS 配置及各自的数据目录。
 - `init` 会生成随机的 `example.invalid` 白名单邮箱；邮箱密码登录仍然开启，但在你把它改成实际邮箱前不会允许真实账户注册。
-- `start` 自动启动私有 RustFS，按镜像内置用户修正数据目录所有权，并通过一次性 AWS CLI 容器创建或复用 Bucket；RustFS API 和管理端口不会发布到宿主机。
-- 若已有 LobeHub 容器的 S3、Composio 或认证环境变量与配置不符，`start` 会重建应用容器，数据库和 RustFS 数据不受影响。
-- `rm` 删除容器但保留数据库和 RustFS 数据；`purge` 会永久删除数据库及 RustFS 对象数据；`reset` 还会删除生成的应用、数据库和 RustFS 配置。
+- `start` 自动启动 Redis 和私有 RustFS，按镜像内置用户修正 RustFS 数据目录所有权，并通过一次性 AWS CLI 容器创建或复用 Bucket；RustFS API 和管理端口不会发布到宿主机。
+- 若已有 LobeHub 容器的模型、Redis、S3、Composio 或认证环境变量与配置不符，`start` 会重建应用容器，数据库、Redis 和 RustFS 数据不受影响。
+- `rm` 删除容器但保留数据库、Redis 和 RustFS 数据；`purge` 会永久删除数据库、Redis 和 RustFS 对象数据；`reset` 还会删除生成的应用、数据库、Redis 和 RustFS 配置。
 - 旧全栈配置中的 `USE_INTERNAL_*` / `EXTERNAL_*` 不兼容当前配置。切换方案会创建新数据库，不会迁移旧账户和聊天记录，也不会停止或删除旧 Casdoor、Redis、RustFS 容器及数据。
 
 ## 4. 快速执行
@@ -49,8 +58,9 @@ RustFS 配置保存在同目录的 `settings_rustfs.conf`，其中包含生成�
 ```bash
 cd deploy_apps/lobechat
 bash cli.sh init
-# 修改 settings_lobechat.conf 中的 APP_URL
+# 修改 settings_lobechat.conf 中的 APP_URL、OPENAI_API_KEY 和模型配置
 # 将 AUTH_ALLOWED_EMAILS 的 example.invalid 占位邮箱改成实际邮箱或域名
+# 第三方 OpenAI 兼容服务填写 OPENAI_PROXY_URL、OPENAI_API_KEY 和 OPENAI_MODEL_LIST
 # 按需填写 COMPOSIO_API_KEY 或 Casdoor 的 AUTH_* 配置
 bash cli.sh start
 ```
@@ -61,24 +71,30 @@ bash cli.sh start
 
 #### init
 
-生成应用密钥、ParadeDB 配置和 RustFS 配置，不启动容器。
+生成应用密钥、ParadeDB、Redis 和 RustFS 配置，不启动容器。
 
 ```bash
 [ ! -f "$CONF_FILE" ] && generate_settings
 load_conf
 hook on_init
 ensure_rustfs_conf
+ensure_redis_conf
 ```
 
 #### start
 
-先启动 ParadeDB 和 RustFS 并接入专属网络，等待健康检查后自动创建 Bucket，再创建或启动 LobeHub。
+先启动 ParadeDB、Redis 和 RustFS 并接入专属网络，等待健康检查后自动创建 Bucket，再创建或启动 LobeHub。
 
 ```bash
 net_ensure "$net"
+redis_conf="$CONF_DIR/settings_redis.conf"
+redis_name="$(conf_val "$redis_conf" INSTANCE_NAME)"
 deploy_paradedb start
+deploy_redis start
 net_connect "$net" "$db_name"
+net_connect "$net" "$redis_name"
 wait_healthy "database" "$db_name"
+wait_healthy "Redis" "$redis_name"
 
 ensure_rustfs_conf
 rustfs_conf="$(rustfs_conf_path)"
@@ -94,6 +110,7 @@ S3_BUCKET="${S3_BUCKET:-lobechat}"
 S3_ACCESS_KEY_ID="$access_key"
 S3_SECRET_ACCESS_KEY="$secret_key"
 ensure_s3_bucket "$net" "$S3_ENDPOINT" "$S3_BUCKET" "$access_key" "$secret_key"
+REDIS_URL="redis://${redis_name}:6379/${REDIS_DATABASE}"
 HOOK_RUN_ARGS=(--network "$net")
 
 db_url="postgres://$(conf_val "$PG_CONF" DB_USER):$(conf_val "$PG_CONF" DB_PASSWORD)@$(conf_val "$PG_CONF" INSTANCE_NAME):5432/$(conf_val "$PG_CONF" DB_NAME)"
@@ -116,6 +133,13 @@ docker run -d \
     -e "AUTH_EMAIL_VERIFICATION=0" \
     -e "AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:-}" \
     -e "COMPOSIO_API_KEY=${COMPOSIO_API_KEY:-}" \
+    -e "ENABLED_OPENAI=${ENABLED_OPENAI:-1}" \
+    -e "OPENAI_API_KEY=${OPENAI_API_KEY:-}" \
+    -e "OPENAI_PROXY_URL=${OPENAI_PROXY_URL:-}" \
+    -e "OPENAI_MODEL_LIST=${OPENAI_MODEL_LIST:-}" \
+    -e "REDIS_URL=${REDIS_URL}" \
+    -e "REDIS_DATABASE=${REDIS_DATABASE:-0}" \
+    -e "REDIS_PREFIX=${REDIS_PREFIX:-lobechat}" \
     -e "S3_ENDPOINT=${S3_ENDPOINT}" \
     -e "S3_BUCKET=${S3_BUCKET}" \
     -e "S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}" \
@@ -127,7 +151,7 @@ docker run -d \
 
 #### up
 
-初始化配置后启动应用、数据库和 RustFS。
+初始化配置后启动应用、数据库、Redis 和 RustFS。
 
 ```bash
 do_init
@@ -136,29 +160,31 @@ do_start
 
 #### stop
 
-停止 LobeHub、ParadeDB 和 RustFS 容器，保留配置与数据。
+停止 LobeHub、ParadeDB、Redis 和 RustFS 容器，保留配置与数据。
 
 ```bash
 docker stop "$INSTANCE_NAME" 2>/dev/null || true
 deploy_paradedb stop
+deploy_redis stop
 deploy_rustfs stop
 ```
 
 #### rm
 
-删除应用、数据库和 RustFS 容器及专属网络，保留配置与数据。
+删除应用、数据库、Redis 和 RustFS 容器及专属网络，保留配置与数据。
 
 ```bash
 docker stop "$INSTANCE_NAME" 2>/dev/null || true
 docker rm "$INSTANCE_NAME" 2>/dev/null || true
 deploy_paradedb rm
+deploy_redis rm
 deploy_rustfs rm
 net_rm "${INSTANCE_NAME}_net"
 ```
 
 #### purge
 
-危险操作：删除应用、数据库和 RustFS 容器及其数据，保留配置文件。
+危险操作：删除应用、数据库、Redis 和 RustFS 容器及其数据，保留配置文件。
 
 ```bash
 docker stop "$INSTANCE_NAME" 2>/dev/null || true
@@ -168,17 +194,18 @@ if [ -d "$data_dir" ]; then
     docker run --rm -v "${CONF_DIR}/data:/purge" alpine rm -rf "/purge/${INSTANCE_NAME}_data"
 fi
 deploy_paradedb purge
+deploy_redis purge
 deploy_rustfs purge
 net_rm "${INSTANCE_NAME}_net"
 ```
 
 #### reset
 
-危险操作：先执行 `purge`，再删除应用、ParadeDB 和 RustFS 配置文件。
+危险操作：先执行 `purge`，再删除应用、ParadeDB、Redis 和 RustFS 配置文件。
 
 ```bash
 do_purge
-rm -f "$CONF_FILE" "$PG_CONF" "$(rustfs_conf_path)"
+rm -f "$CONF_FILE" "$PG_CONF" "$REDIS_CONF" "$(rustfs_conf_path)"
 ```
 
 ## 6. 升级与旧实例迁移
@@ -203,4 +230,4 @@ bash cli.sh start --conf "$PWD/minimal/settings_lobechat.conf"
 
 使用 `bash cli.sh network` 可查看应用专属网络及已连接容器。
 
-官方参考：[Docker 数据库版部署](https://lobehub.com/docs/self-hosting/platform/docker)、[认证环境变量](https://lobehub.com/docs/self-hosting/environment-variables/auth)。
+官方参考：[Docker 数据库版部署](https://lobehub.com/docs/self-hosting/platform/docker)、[模型供应商环境变量](https://lobehub.com/docs/self-hosting/environment-variables/model-provider)、[认证环境变量](https://lobehub.com/docs/self-hosting/environment-variables/auth)。
