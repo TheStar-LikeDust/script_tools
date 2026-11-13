@@ -1,5 +1,9 @@
-# ParadeDB Settings (LobeChat recommended Postgres)
+# ParadeDB Settings (Bash syntax; quote literal secrets with single quotes)
 INSTANCE_NAME="{{INSTANCE_NAME}}"
+IMAGE="paradedb/paradedb:latest-pg17"
+
+# Optional existing shared Docker network; empty uses a private Compose network.
+DOCKER_NETWORK=""
 
 # Host Port
 DB_PORT="{{DB_PORT}}"

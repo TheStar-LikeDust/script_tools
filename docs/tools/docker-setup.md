@@ -4,7 +4,7 @@
 
 > 宿主机级别的 Docker 全局治理工具，当前负责安装并启用 ufw-docker，让 UFW 能够管控 Docker 发布的端口。
 
-该服务直接作用于宿主物理机，非容器化，无 `settings_<服务名>.conf` 与数据目录。默认情况下 Docker 通过 `-p` 发布的端口会绕过 UFW（其规则写入 iptables 的 `DOCKER` 链，先于 UFW 的 `INPUT` 链生效）；启用 ufw-docker 后，Docker 发布端口默认不再对公网开放，需经 `ufw-docker allow` 显式放行。作为后续 Docker 宿主机治理脚本的聚合入口，可逐步扩展更多全局配置。
+该工具直接修改宿主机防火墙，无 settings 和数据目录。在 Docker 使用 iptables 的环境中，发布端口的流量可能绕过常规 UFW INPUT 规则；ufw-docker 在转发路径加入 UFW 规则，需要对外开放的容器端口通过 `ufw-docker allow` 管理。作用对象包括 Compose 的 `ports` 发布，具体访问结果还取决于宿主机已有规则。
 
 ## 2. 核心配置项
 
@@ -15,7 +15,7 @@
 
 ## 3. 备注
 
-- 全局副作用：启用后影响整机所有 Docker 服务，所有 `-p` 发布端口默认对公网不可达，直至 `ufw-docker allow` 放行。
+- 作用范围：影响整机 Docker 发布端口，包括 Compose 的 `ports`；共享 Docker 网络的服务发现与接入仍由 Compose 管理。
 - 前置依赖：需宿主机已安装 ufw；缺失时 `start` 直接报错退出。
 - 权限：涉及防火墙与系统文件，脚本对非 root 调用自动回退 `sudo`。
 - 幂等：`start` 检测 `after.rules` 中的 ufw-docker 标记块，已存在则跳过，不重复注入。
@@ -25,14 +25,16 @@
 ```bash
 cd tools/docker-setup
 
-# 启用 ufw-docker（全局生效）
+# Apply host-wide ufw-docker rules.
 bash cli.sh start
 
-# 还原 ufw-docker（移除注入规则）
+# Remove the injected rules.
 bash cli.sh stop
 ```
 
 ## 5. 命令解释
+
+以下片段展示 CLI 内部操作；日常使用 `bash cli.sh start` 或 `bash cli.sh stop`，权限处理由 CLI 完成。
 
 #### start
 
@@ -56,5 +58,6 @@ systemctl restart ufw
 
 ## 6. 其他补充
 
-- 命令集裁剪：作为幂等的全局配置工具，仅保留 `start`（应用）与 `stop`（还原），不实现 `init`/`up`/`rm`/`purge`/`reset`。
-- 与反代配合：通常与 `tools/nginx` 搭配——本服务关闭直连大门，`tools/nginx` 开放仅含白名单路径的公网入口。
+- 命令集：提供 `start`（应用）与 `stop`（还原），不提供 Compose 生命周期或镜像 `update`。
+- 与反代配合：可与 `tools/nginx` 配合控制应用直连端口和公网反代入口。
+- 本工具不安装 Docker Engine 或 Compose。规则与可执行文件位于宿主机，复制本工具目录不会携带防火墙配置。

@@ -4,85 +4,74 @@
 
 > RustFS 是一款高性能、兼容 Amazon S3 的对象存储服务器，常用于存储业务文件、用户上传的头像、知识库等大型非结构化数据。
 
-单容器即可独立运行并内建 Web 控制台。为了清晰的权限隔离，容器运行时将 S3 API 的读写端口与 Admin 管理界面的端口分离暴露。作为基础存储，支持通过 `--conf` 和 `--name` 参数作为子组件被上层应用嵌入实现数据的独立挂靠；嵌入式部署可加 `--internal`，不向宿主机发布端口。
+RustFS 独立于应用部署，提供 S3 API 和管理控制台。init 生成配置文件和 Compose YAML，数据保存在配置目录下的相对路径 bind mount 中；两个端口可选择是否发布到宿主机。
 
 ## 2. 核心配置项
 
 ### settings_rustfs.conf
 
 - `INSTANCE_NAME`: 实例名（时间戳后缀，如 `rustfs_8421`），决定容器名与数据目录。
-- `RUSTFS_PORT`: S3 API 对宿主机暴露的端口（容器内为 `9000`）。
-- `RUSTFS_ADMIN_PORT`: 控制台 UI 暴露的端口（容器内为 `9001`）。
+- `RUSTFS_PORT`: S3 API 宿主机端口（容器内为 `9000`），仅在 `RUSTFS_PUBLISH_PORTS=true` 时发布。
+- `RUSTFS_ADMIN_PORT`: 控制台宿主机端口（容器内为 `9001`），仅在 `RUSTFS_PUBLISH_PORTS=true` 时发布。
+- `RUSTFS_PUBLISH_PORTS`: 是否向宿主机发布两个端口，默认 `true`。
+- `DOCKER_NETWORK`: 可选的、预先创建的共享 Docker 网络；留空时使用 Compose 私有网络。
+- `IMAGE`: Compose 使用的镜像，默认 `rustfs/rustfs:latest`。
 - `RUSTFS_ACCESS_KEY`: 自动生成的访问密钥（S3 Access Key）。
 - `RUSTFS_SECRET_KEY`: 自动生成的访问私钥（S3 Secret Key）。
 
 ## 3. 备注
 
-- 不提供初始存储桶：本服务独立启动后默认没有任何 Bucket。对接应用时需人工登录 Admin 控制台或通过业务代码创建所需 Bucket；嵌入 LobeChat 时由 LobeChat 启动流程自动创建。
-- `start` 会从 RustFS 镜像读取内置 `rustfs` 用户的 UID/GID，并在数据目录属主不匹配时自动修正目录及已有文件的所有权。部署脚本需有权限执行 `chown`；无需手动更改目录权限或以 root 运行 RustFS。
+- 不提供初始存储桶：本服务独立启动后默认没有任何 Bucket。对接应用时需人工登录 Admin 控制台或通过业务代码创建所需 Bucket。LobeHub 等应用的 bucket 和专用访问凭证由管理员提前准备，应用不会自动创建。
+- `start` 会用临时容器读取镜像内 `rustfs` 用户的 UID/GID，并在数据目录属主不匹配时修正目录及已有文件的所有权。`update` 在拉取镜像后执行相同处理。部署脚本需有权限执行 `chown`，临时容器读取完成后删除。
+- 配置共享网络后，同一网络中的应用使用 RustFS 实例名和容器端口 `9000` 连接 S3 API。容器内的 `localhost` 指向容器自身；宿主机或远程客户端使用服务器地址和 `RUSTFS_PORT`。`RUSTFS_PUBLISH_PORTS` 控制两个端口一起发布或关闭，单独发布须修改 Compose 模板。
+- 浏览器直接使用 S3 预签名链接时，S3 API 地址必须对应用容器和浏览器同时可达，可用稳定域名及 HTTPS 反向代理；管理控制台端口 `9001` 不能代替 S3 API。
+- 共享网络由管理员提前创建，例如 `docker network create shared_services`，再将 `DOCKER_NETWORK` 设为 `shared_services`。本服务只接入网络，不创建或删除共享网络。
+- 同名容器属于其他 Compose 项目或服务时，CLI 拒绝操作；不同部署使用唯一实例名。
 
 ## 4. 快速执行
 
 ```bash
 cd deploy_services/rustfs
 
-# 常规分步拉起（推荐）：先生成配置、按需修改 settings_rustfs.conf 后再启动
+# Generate settings and YAML, then edit settings before starting.
 bash cli.sh init
 bash cli.sh start
 
-# 一键拉起（跳过配置直接启动）
+# Use init + start when settings are ready.
 bash cli.sh up
 
-# 作为其他应用的私有存储服务，不发布宿主机端口
+# Pull and apply the configured image.
+bash cli.sh update
+
+# Disable host ports for this invocation; persist the flag in settings if needed.
 bash cli.sh start --conf /path/to/settings_rustfs.conf --internal
 
-# 停止运行
+# Stop this RustFS instance.
 bash cli.sh stop
 
-# 销毁容器（保留配置与 data/ 数据目录）
+# Remove containers; keep settings and bind mount data.
 bash cli.sh rm
 
-# 危险操作：彻底销毁容器，并删除挂载的 data/ 数据目录
+# DANGER: permanently delete this instance's data.
 bash cli.sh purge
 ```
 
 ## 5. 命令解释
 
+以下代码展示 CLI 内部操作，环境变量由 CLI 读取 settings 后导出；`compose` 为使用当前项目目录、实例名和 YAML 路径的包装函数。日常操作使用 `bash cli.sh <命令>`。
+
 #### init
 
-若配置文件不存在则用模板渲染生成，再创建数据目录，不启动容器。`--name` 指定完整实例名。
+若配置文件不存在则用模板生成；随后读取配置、生成 `settings_rustfs.compose.yaml` 并创建数据目录，不启动容器。`--name` 指定完整实例名。
 
-```bash
-sed -e "s/{{INSTANCE_NAME}}/<--name 或 rustfs_时间戳>/g" \
-    -e "s/{{RUSTFS_PORT}}/<随机端口>/g" \
-    -e "s/{{RUSTFS_ADMIN_PORT}}/<随机端口>/g" \
-    -e "s/{{RUSTFS_ACCESS_KEY}}/<随机密钥>/g" \
-    -e "s/{{RUSTFS_SECRET_KEY}}/<随机密钥>/g" \
-    "$TPL_DIR/settings_rustfs.conf.tpl" > "$CONF_FILE"
-
-mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data"
-```
+生成的 Compose YAML 通过环境变量引用配置值，访问密钥留在 settings 文件中。`--conf PATH` 的父目录须已存在，YAML 与数据保存在该目录；CLI 和模板仍位于脚本目录。`--internal` 在本次命令中关闭端口发布，长期关闭应设置 `RUSTFS_PUBLISH_PORTS=false`。
 
 #### start
 
-启动容器。若同名容器已存在，仅 `docker start`；否则 `docker run` 新建。
+按当前配置刷新 Compose YAML 并执行 `docker compose up -d`；配置变化会由 Compose 更新容器定义。项目名为 `INSTANCE_NAME`。
 
 ```bash
-docker run -d \
-    --name "${INSTANCE_NAME}" \
-    -p "${RUSTFS_PORT}:9000" \
-    -p "${RUSTFS_ADMIN_PORT}:9001" \
-    -v "$CONF_DIR/data/${INSTANCE_NAME}_data:/data" \
-    -e RUSTFS_CONSOLE_ENABLE="true" \
-    -e RUSTFS_ACCESS_KEY \
-    -e RUSTFS_SECRET_KEY \
-    --health-cmd "wget -qO- http://localhost:9000/health >/dev/null 2>&1 || exit 1" \
-    --health-interval 5s \
-    --health-timeout 3s \
-    --health-retries 30 \
-    --restart unless-stopped \
-    rustfs/rustfs:latest \
-    --access-key "${RUSTFS_ACCESS_KEY}" --secret-key "${RUSTFS_SECRET_KEY}" /data
+docker compose --env-file /dev/null --project-directory "$CONF_DIR" --project-name "$INSTANCE_NAME" -f "$COMPOSE_FILE" up -d
 ```
 
 #### up
@@ -91,34 +80,54 @@ docker run -d \
 
 #### stop
 
-停止容器。
+执行 `docker compose ... stop`，保留容器、网络与数据。
 
 ```bash
-docker stop "${INSTANCE_NAME}"
+docker compose --env-file /dev/null --project-directory "$CONF_DIR" --project-name "$INSTANCE_NAME" -f "$COMPOSE_FILE" stop
 ```
 
 #### rm
 
-删除容器，保留 `./data/` 与 `settings_rustfs.conf`。
+执行 `docker compose ... down`，移除本项目容器和私有网络，保留 `./data/` 与配置；外部共享网络不会删除。
 
 ```bash
-docker stop "${INSTANCE_NAME}"
-docker rm "${INSTANCE_NAME}"
+docker compose --env-file /dev/null --project-directory "$CONF_DIR" --project-name "$INSTANCE_NAME" -f "$COMPOSE_FILE" down
 ```
 
 #### purge
 
-删除容器并删除本地数据目录，保留 `settings_rustfs.conf`。
+危险操作：移除 Compose 容器并删除本地数据目录，保留 `settings_rustfs.conf`。
 
 ```bash
-docker stop "${INSTANCE_NAME}"
-docker rm "${INSTANCE_NAME}"
-rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data"
+docker compose --env-file /dev/null --project-directory "$CONF_DIR" --project-name "$INSTANCE_NAME" -f "$COMPOSE_FILE" down
+docker run --rm -v "$CONF_DIR/data:/purge" alpine rm -rf "/purge/${INSTANCE_NAME}_data"
 ```
 
-## 6. 其他补充
+#### update
 
-- 镜像版本：当前固定 `rustfs/rustfs:latest`。若需可复现部署，可锁定到更具体的版本标签。
-- 控制台访问：启动后打开 `http://<服务器IP>:<RUSTFS_ADMIN_PORT>`，用 Access Key / Secret Key 登录，可视化创建 Bucket 与对象。
-- 独立启动时不自动创建 Bucket；嵌入 LobeChat 时由应用启动流程创建并复用 Bucket。
-- 使用 `--internal` 时不会发布 S3 API 和管理控制台端口，仅同一 Docker 网络中的容器可访问。
+拉取 settings 中 `IMAGE` 对应的镜像，按该镜像处理数据属主，再由 Compose 重建服务；配置、凭证和数据目录保留。
+
+```bash
+docker compose --env-file /dev/null --project-directory "$CONF_DIR" --project-name "$INSTANCE_NAME" -f "$COMPOSE_FILE" pull
+ensure_data_owner "$CONF_DIR/data/${INSTANCE_NAME}_data"
+docker compose --env-file /dev/null --project-directory "$CONF_DIR" --project-name "$INSTANCE_NAME" -f "$COMPOSE_FILE" up -d
+```
+
+#### reset
+
+危险操作：先执行 `purge`，再只删除当前 `--conf` 对应的 settings 和生成 YAML，其他配置保留。
+
+```bash
+do_purge
+rm -f -- "$CONF_FILE" "$COMPOSE_FILE"
+```
+
+## 6. Bucket、凭证与复制恢复
+
+默认 `rustfs/rustfs:latest` 是滚动标签，可在 settings 中指定具体版本或 digest。开启端口发布后，通过 `http://<服务器IP>:<RUSTFS_ADMIN_PORT>` 访问控制台，使用 settings 中的 Access Key / Secret Key 登录。
+
+管理员为每个应用准备独立 Bucket 和仅有该 Bucket 所需权限的凭证，填入应用 settings；应用不复用 RustFS 管理凭证，也不自动创建 Bucket。需要浏览器上传时同时配置相应 CORS。
+
+停止对象写入及 RustFS，或完成一致性备份后，复制包含 CLI、templates、settings、YAML 和完整数据目录的部署目录，保留对象、Bucket 和访问凭证。目标机器准备共享网络、兼容镜像和数据属主权限，再按原实例名启动。应用目录本身不包含此对象数据。
+
+使用 `--internal` 时本次生成的 YAML 不发布 S3 API 和控制台端口；下次未传该参数的 `start/update` 会按 settings 中的 `RUSTFS_PUBLISH_PORTS` 重新生成 YAML。

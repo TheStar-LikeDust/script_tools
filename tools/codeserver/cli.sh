@@ -7,7 +7,7 @@ set -euo pipefail
 COMMAND=${1:-help}
 shift || true
 
-# Cascade args (--conf/--name) plus any command-specific extras
+# Parse instance settings and naming options.
 CONF_FILE=""
 NAME_OVERRIDE=""
 EXTRA_ARGS=()
@@ -193,7 +193,7 @@ do_reset() {
 
 do_help() {
     echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME]"
-    echo "  init    : Generate settings_codeserver.conf and config.yaml, install code-server if absent"
+    echo "  init    : Generate missing settings and data directories; install code-server if absent"
     echo "  start   : Start code-server in the background using tmux"
     echo "  up      : Initialize config and start the service instantly"
     echo "  stop    : Stop the running tmux session"
@@ -201,7 +201,7 @@ do_help() {
     echo "  purge   : DANGER - Stop session AND permanently delete ./data (Preserves settings_codeserver.conf)"
     echo "  reset   : DANGER - purge AND delete ALL settings (back to pristine source files)"
     echo ""
-    echo "Options (for embedding as a sub-service under another app):"
+    echo "Options:"
     echo "  --conf PATH : Config file location (default: <script_dir>/settings_codeserver.conf)."
     echo "                Data dir is derived as <dir-of-conf>/data/..."
     echo "  --name NAME : Full session name to write at init (default: auto 'codeserver_<ts>')."

@@ -1,20 +1,17 @@
 # Casdoor Settings
-
-# === Casdoor ===
 INSTANCE_NAME="{{INSTANCE_NAME}}"
 CASDOOR_PORT="{{CASDOOR_PORT}}"
-# Application database Casdoor uses (auto-created on first run)
-CASDOOR_DB_NAME="casdoor"
+IMAGE="casbin/casdoor:latest"
 
-# Bundled DB switch:
-#   true  -> bundle a paradedb (delegated to deploy_services/paradedb; see casdoor_paradedb.conf)
-#   false -> connect to the external database configured below
-WITH_BUNDLED_DB="{{WITH_BUNDLED_DB}}"
+# Join an existing shared network, or leave empty for a private Compose network.
+DOCKER_NETWORK=""
 
-# === External Database (used ONLY when WITH_BUNDLED_DB=false) ===
-EXT_DB_HOST=""
-EXT_DB_PORT="5432"
-EXT_DB_USER="postgres"
-EXT_DB_PASSWORD=""
-# Bootstrap DB to connect to for creating CASDOOR_DB_NAME (usually 'postgres')
-EXT_DB_NAME="postgres"
+# An administrator must create this database and its dedicated account first.
+# On a shared network use the database INSTANCE_NAME and container port 5432.
+# For a remote server use its reachable hostname/IP and published port.
+DB_HOST=""
+DB_PORT="5432"
+DB_NAME="casdoor"
+DB_USER="casdoor"
+DB_PASSWORD=''
+DB_SSLMODE="disable"

@@ -3,6 +3,9 @@
 # === Sub2API ===
 INSTANCE_NAME="{{INSTANCE_NAME}}"
 SUB2API_PORT="{{SUB2API_PORT}}"
+IMAGE="weishaw/sub2api:latest"
+# Leave empty for a private Compose network; otherwise use an existing network.
+DOCKER_NETWORK=""
 TZ="Asia/Shanghai"
 
 # Server runtime
@@ -11,16 +14,27 @@ RUN_MODE="standard"
 
 # === Admin account (auto-created on first run) ===
 ADMIN_EMAIL="{{ADMIN_USER}}@sub2api.local"
-ADMIN_PASSWORD="{{ADMIN_PASSWORD}}"
+ADMIN_PASSWORD='{{ADMIN_PASSWORD}}'
 
 # === JWT ===
 # NEVER change after first start: existing login sessions would be invalidated.
-JWT_SECRET="{{JWT_SECRET}}"
+JWT_SECRET='{{JWT_SECRET}}'
 JWT_EXPIRE_HOUR="24"
 
 # === TOTP (2FA) ===
 # NEVER change after first start: existing 2FA secrets cannot be decrypted.
-TOTP_ENCRYPTION_KEY="{{TOTP_ENCRYPTION_KEY}}"
+TOTP_ENCRYPTION_KEY='{{TOTP_ENCRYPTION_KEY}}'
+
+# === External PostgreSQL ===
+# The administrator must create a dedicated database and account beforehand.
+# Same Docker network: use the database container name and port 5432.
+# Remote database: use its reachable hostname/IP and published port.
+DB_HOST=""
+DB_PORT="5432"
+DB_NAME="sub2api"
+DB_USER="sub2api"
+DB_PASSWORD=''
+DB_SSLMODE="disable"
 
 # === Database connection pool ===
 DATABASE_MAX_OPEN_CONNS="50"
@@ -29,8 +43,10 @@ DATABASE_CONN_MAX_LIFETIME_MINUTES="30"
 DATABASE_CONN_MAX_IDLE_TIME_MINUTES="5"
 
 # === Redis ===
-# Bundled redis runs without a password inside the private network.
-REDIS_PASSWORD=""
+# Use a separately managed instance; localhost would refer to Sub2API itself.
+REDIS_HOST=""
+REDIS_PORT="6379"
+REDIS_PASSWORD=''
 REDIS_DB="0"
 REDIS_POOL_SIZE="1024"
 REDIS_MIN_IDLE_CONNS="10"

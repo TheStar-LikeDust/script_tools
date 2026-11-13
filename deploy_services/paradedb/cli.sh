@@ -7,15 +7,14 @@ set -euo pipefail
 COMMAND=${1:-help}
 shift || true
 
-# Cascade args (--conf/--name) plus any command-specific extras
+# Parse instance settings and naming options.
 CONF_FILE=""
 NAME_OVERRIDE=""
-EXTRA_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --conf) CONF_FILE="$2"; shift 2 ;;
         --name) NAME_OVERRIDE="$2"; shift 2 ;;
-        *) EXTRA_ARGS+=("$1"); shift ;;
+        *) echo "[ERROR] Unknown option: $1" >&2; exit 2 ;;
     esac
 done
 
@@ -25,12 +24,11 @@ TPL_DIR="$SCRIPT_DIR/templates"
 CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_paradedb.conf}"
 # Config + data live together; data dir is derived from the config file's directory at runtime
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
+CONF_FILE="$CONF_DIR/$(basename "$CONF_FILE")"
+COMPOSE_FILE="${CONF_FILE%.conf}.compose.yaml"
 IMAGE="paradedb/paradedb:latest-pg17"
-HOOK_RUN_ARGS=()   # filled by hooks.sh on_start if present; injected into docker run
-
-# Optional service-specific operations (none for this base service: no hooks.sh)
-[ -f "$SCRIPT_DIR/hooks.sh" ] && source "$SCRIPT_DIR/hooks.sh"
-hook() { if declare -F "$1" >/dev/null; then "$1"; fi; }
+DOCKER_NETWORK=""
+DB_PUBLISH_PORT=true
 
 # -----------------------------------------------------------------------------
 # 2. Utility Functions
@@ -39,21 +37,46 @@ hr() { echo "-------------------------------------------------------------------
 random_port() { shuf -i 30000-40000 -n 1; }
 random_password() { openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32; }
 
-container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
-
-require_conf() {
+load_settings() {
     if [ ! -f "$CONF_FILE" ]; then
         echo "[ERROR] [ParadeDB] $CONF_FILE not found. Run 'bash cli.sh init' first."
         exit 1
+    fi
+    # Read CRLF files without rewriting existing credentials.
+    set -a
+    source <(sed 's/\r$//' "$CONF_FILE")
+    set +a
+    export IMAGE DOCKER_NETWORK DB_PUBLISH_PORT
+    if [[ ! "$INSTANCE_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+        echo "[ERROR] INSTANCE_NAME must match [a-z0-9][a-z0-9_-]*." >&2
+        exit 1
+    fi
+}
+
+compose() {
+    docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
+        --project-name "$INSTANCE_NAME" -f "$COMPOSE_FILE" "$@"
+}
+
+require_managed_container() {
+    local container labels
+    container="$(docker container ls -a --filter "name=^/${INSTANCE_NAME}$" --format '{{.Names}}')"
+    [ -n "$container" ] || return 0
+    labels="$(docker container inspect --format '{{index .Config.Labels "com.docker.compose.project"}}/{{index .Config.Labels "com.docker.compose.service"}}' "$INSTANCE_NAME")"
+    if [ "$labels" != "$INSTANCE_NAME/paradedb" ]; then
+        echo "[ERROR] '$INSTANCE_NAME' belongs to another deployment. Choose a unique INSTANCE_NAME; this container will not be modified." >&2
+        return 1
     fi
 }
 
 # -----------------------------------------------------------------------------
 # 3. Service Config Rendering
 # -----------------------------------------------------------------------------
-generate_settings() {
-    local port=$(random_port)
-    local pass=$(random_password)
+generate_settings() (
+    umask 077
+    local port pass
+    port=$(random_port)
+    pass=$(random_password)
     local name="$NAME_OVERRIDE"
     if [ -z "$name" ]; then
         local ts=$(date +%s)
@@ -66,6 +89,24 @@ generate_settings() {
         -e "s/{{DB_USER}}/postgres/g" \
         -e "s/{{DB_NAME}}/postgres/g" \
         "$TPL_DIR/settings_paradedb.conf.tpl" > "$CONF_FILE"
+)
+
+generate_compose() {
+    cat "$TPL_DIR/compose.yaml.tpl" > "$COMPOSE_FILE"
+    if [ "$DB_PUBLISH_PORT" = true ]; then
+        cat >> "$COMPOSE_FILE" <<'YAML'
+    ports:
+      - "${DB_PORT:?DB_PORT is required}:5432"
+YAML
+    fi
+    if [ -n "$DOCKER_NETWORK" ]; then
+        cat >> "$COMPOSE_FILE" <<'YAML'
+networks:
+  default:
+    external: true
+    name: "${DOCKER_NETWORK}"
+YAML
+    fi
 }
 
 # -----------------------------------------------------------------------------
@@ -77,9 +118,8 @@ do_init() {
     hr
 
     [ ! -f "$CONF_FILE" ] && generate_settings
-    source "$CONF_FILE"
-
-    hook on_init
+    load_settings
+    generate_compose
 
     # Pre-create the bind-mount data dir so Docker won't auto-create it as root
     mkdir -p "${CONF_DIR}/data/${INSTANCE_NAME}_data"
@@ -88,86 +128,74 @@ do_init() {
     echo "[SUCCESS] [ParadeDB] Initialization completed!"
     hr
     echo "[IMPORTANT] Recommended next steps:"
-    echo "  1. Review settings_paradedb.conf (port / credentials / db name)"
-    echo "  2. Run 'bash cli.sh start' to bring up the database"
-    echo "Note: managed via plain 'docker run'; settings_paradedb.conf is the single config source."
+    echo "  1. Review $CONF_FILE (port / credentials / network)"
+    echo "  2. Run 'bash cli.sh start' to refresh YAML and start with Docker Compose"
+    echo "Compose definition: $COMPOSE_FILE (generated; edit templates/compose.yaml.tpl instead)"
     hr
 }
 
 do_start() {
-    require_conf
-    # Source settings, then map DB_* to the container's POSTGRES_* via explicit -e values
-    set -a; source "$CONF_FILE"; set +a
-
-    hook on_start
-
+    load_settings
+    require_managed_container
+    generate_compose
     mkdir -p "${CONF_DIR}/data/${INSTANCE_NAME}_data"
 
     hr
     echo "[INFO] [ParadeDB] Starting service (Container: ${INSTANCE_NAME})..."
     hr
-    if container_exists; then
-        echo "[INFO] Container '${INSTANCE_NAME}' already exists, starting it..."
-        docker start "$INSTANCE_NAME" >/dev/null
-    else
-        local port_args=()
-        if [ "${DB_PUBLISH_PORT:-true}" = "true" ]; then
-            port_args=(-p "${DB_PORT}:5432")
-        fi
-        docker run -d \
-            --name "$INSTANCE_NAME" \
-            "${HOOK_RUN_ARGS[@]}" \
-            "${port_args[@]}" \
-            -v "${CONF_DIR}/data/${INSTANCE_NAME}_data:/var/lib/postgresql/data" \
-            -e POSTGRES_USER="$DB_USER" \
-            -e POSTGRES_PASSWORD="$DB_PASSWORD" \
-            -e POSTGRES_DB="$DB_NAME" \
-            --health-cmd "pg_isready -U ${DB_USER}" \
-            --health-interval 5s \
-            --health-timeout 5s \
-            --health-retries 5 \
-            --restart unless-stopped \
-            "$IMAGE" -c shared_preload_libraries=pg_search >/dev/null
-    fi
+    compose up -d
     hr
-    echo "[SUCCESS] [ParadeDB] Service is up and running!"
+    echo "[SUCCESS] [ParadeDB] Container started; check Docker health status for readiness."
     if [ "${DB_PUBLISH_PORT:-true}" = "true" ]; then
         echo "Local: psql -h localhost -p ${DB_PORT} -U ${DB_USER} -d ${DB_NAME}"
     else
         echo "PostgreSQL is available only through Docker networks (no host port)."
     fi
+    echo "Docker network address: ${INSTANCE_NAME}:5432 (same network only)"
+    hr
+}
+
+do_update() {
+    load_settings
+    require_managed_container
+    generate_compose
+    mkdir -p "${CONF_DIR}/data/${INSTANCE_NAME}_data"
+
+    hr
+    echo "[INFO] [ParadeDB] Pulling image and recreating the service if needed..."
+    hr
+    compose pull
+    compose up -d
+    hr
+    echo "[SUCCESS] [ParadeDB] Image update completed; settings and data were preserved."
     hr
 }
 
 do_stop() {
-    require_conf
-    source "$CONF_FILE"
+    load_settings
+    require_managed_container
+    [ -f "$COMPOSE_FILE" ] || generate_compose
     hr
     echo "[INFO] [ParadeDB] Stopping service..."
     hr
-    docker stop "$INSTANCE_NAME" 2>/dev/null || true
-    hook on_stop
+    compose stop
 }
 
 do_rm() {
-    require_conf
-    source "$CONF_FILE"
+    load_settings
+    require_managed_container
+    [ -f "$COMPOSE_FILE" ] || generate_compose
     hr
     echo "[INFO] [ParadeDB] Removing container..."
     hr
-    docker stop "$INSTANCE_NAME" 2>/dev/null || true
-    docker rm "$INSTANCE_NAME" 2>/dev/null || true
-    hook on_rm
+    compose down
 }
 
 do_purge() {
-    require_conf
-    source "$CONF_FILE"
+    do_rm
     hr
     echo "[WARN] WARNING: Preparing to completely destroy ParadeDB data!"
     hr
-    docker stop "$INSTANCE_NAME" 2>/dev/null || true
-    docker rm "$INSTANCE_NAME" 2>/dev/null || true
 
     # Clean up local data directory but preserve configs
     local data_dir="${CONF_DIR}/data/${INSTANCE_NAME}_data"
@@ -178,8 +206,6 @@ do_purge() {
         docker run --rm -v "${CONF_DIR}/data:/purge" alpine rm -rf "/purge/${INSTANCE_NAME}_data"
     fi
 
-    hook on_purge
-
     hr
     echo "[SUCCESS] [ParadeDB] Data has been purged (configs preserved)."
     hr
@@ -187,24 +213,25 @@ do_purge() {
 
 do_reset() {
     do_purge
-    echo "[INFO] [ParadeDB] Removing all generated settings under this service..."
-    rm -f "$CONF_DIR"/settings*.conf
+    echo "[INFO] [ParadeDB] Removing this instance's settings and generated YAML..."
+    rm -f -- "$CONF_FILE" "$COMPOSE_FILE"
     hr
     echo "[SUCCESS] [ParadeDB] Reset complete (restored to pristine source files)."
     hr
 }
 
 do_help() {
-    echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME]"
-    echo "  init    : Generate settings_paradedb.conf and create data dir, without starting"
-    echo "  start   : Start the container (run if absent, otherwise just start it)"
+    echo "Usage: $0 {init|start|up|update|stop|rm|purge|reset} [--conf PATH] [--name NAME]"
+    echo "  init    : Generate settings if absent, then Compose YAML and data dir; do not start"
+    echo "  start   : Refresh Compose YAML and run docker compose up -d"
+    echo "  update  : Pull the configured image and recreate the service if needed"
     echo "  up      : Initialize config and start the container instantly"
     echo "  stop    : Stop the running container"
     echo "  rm      : Remove the container (Preserves ./data and settings_paradedb.conf)"
     echo "  purge   : DANGER - Remove container AND permanently delete ./data (Preserves settings_paradedb.conf)"
-    echo "  reset   : DANGER - purge AND delete ALL settings (back to pristine source files)"
+    echo "  reset   : DANGER - purge AND delete only this config and its generated YAML"
     echo ""
-    echo "Options (for embedding as a sub-service under another app):"
+    echo "Options:"
     echo "  --conf PATH : Config file location (default: <script_dir>/settings_paradedb.conf)."
     echo "                Data dir is derived as <dir-of-conf>/data/<INSTANCE_NAME>_data."
     echo "  --name NAME : Full instance name to write at init (default: auto 'paradedb_<ts>')."
@@ -216,11 +243,11 @@ do_help() {
 case "$COMMAND" in
     init)    do_init ;;
     start)   do_start ;;
-    up)      do_init && do_start ;;
+    up)      do_init; do_start ;;
+    update)  do_update ;;
     stop)    do_stop ;;
     rm)      do_rm ;;
     purge)   do_purge ;;
     reset)   do_reset ;;
-    network) if declare -F on_network >/dev/null; then require_conf; source "$CONF_FILE"; on_network "${EXTRA_ARGS[@]}"; else do_help; fi ;;
     *)       do_help ;;
 esac

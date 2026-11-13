@@ -1,45 +1,58 @@
-# LobeHub Server DB deployment: app + bundled PostgreSQL, Redis and RustFS.
+# LobeHub application settings. PostgreSQL, Redis and S3 are managed separately.
 INSTANCE_NAME="{{INSTANCE_NAME}}"
 LOBECHAT_PORT="{{LOBECHAT_PORT}}"
 IMAGE="lobehub/lobehub:latest"
 
-# Browser-facing URL. For remote access, replace localhost with your server IP
-# or use the HTTPS URL of your reverse proxy before starting the app.
+# Existing shared Docker network, or empty for a private Compose network.
+DOCKER_NETWORK=""
+
+# PostgreSQL database and account must be provisioned by the administrator.
+# Use the service container name and internal port on a shared Docker network.
+# Remote services use a reachable hostname/IP and their published port.
+DB_HOST=""
+DB_PORT="5432"
+DB_NAME="lobechat"
+DB_USER="lobechat"
+DB_PASSWORD=''
+DB_SSLMODE="disable"
+
+# Browser-facing URL. For remote access, use your server IP or HTTPS proxy URL.
 APP_URL="http://localhost:{{LOBECHAT_PORT}}"
 
 # Generated once. Keep these with your database backups.
-KEY_VAULTS_SECRET="{{KEY_VAULTS_SECRET}}"
-AUTH_SECRET="{{AUTH_SECRET}}"
+KEY_VAULTS_SECRET='{{KEY_VAULTS_SECRET}}'
+AUTH_SECRET='{{AUTH_SECRET}}'
 JWKS_KEY='{{JWKS_KEY}}'
 
 # Built-in email/password login, without SMTP or email verification.
 # Replace the generated .invalid address with your email or domain before start.
 AUTH_ALLOWED_EMAILS="{{AUTH_ALLOWED_EMAILS}}"
 
-# Optional Composio integration. Leave empty when Composio is not used.
-COMPOSIO_API_KEY=""
+# Optional Composio integration.
+COMPOSIO_API_KEY=''
 
-# Optional Casdoor OIDC integration. Leave AUTH_SSO_PROVIDERS empty to use only
-# email/password login. To enable Casdoor, set it to "casdoor" and fill all
-# three AUTH_CASDOOR_* values below.
+# Optional Casdoor OIDC. Leave AUTH_SSO_PROVIDERS empty for email/password only.
 AUTH_SSO_PROVIDERS=""
 AUTH_CASDOOR_ID=""
-AUTH_CASDOOR_SECRET=""
+AUTH_CASDOOR_SECRET=''
 AUTH_CASDOOR_ISSUER=""
 
-# OpenAI or an OpenAI-compatible third-party provider.
-# Set OPENAI_PROXY_URL to the provider's /v1 endpoint and adjust the model name.
+# OpenAI or an OpenAI-compatible provider.
 ENABLED_OPENAI="1"
-OPENAI_API_KEY=""
+OPENAI_API_KEY=''
 OPENAI_PROXY_URL="https://api.openai.com/v1"
 OPENAI_MODEL_LIST="gpt-4o-mini"
 
-# Redis is generated and started as a bundled service on the private Docker network.
-# REDIS_URL is replaced at start with the bundled Redis container address.
-REDIS_URL=""
+# Example: redis://username:percent-encoded-password@redis_host:6379/0
+# Use rediss:// for TLS; keep the URL database number equal to REDIS_DATABASE.
+REDIS_URL=''
 REDIS_DATABASE="0"
-REDIS_PREFIX="lobechat"
+REDIS_PREFIX="{{INSTANCE_NAME}}"
 
-# RustFS runs alongside LobeHub on its private Docker network.
-# Endpoint and credentials are generated from the bundled RustFS settings.
-S3_BUCKET="lobechat"
+# Pre-create the bucket and dedicated credentials outside this app.
+# For direct browser uploads/downloads, this endpoint must be reachable both
+# from the app container and from the browser. Do not use an ephemeral IP.
+S3_ENDPOINT=""
+S3_BUCKET=""
+S3_ACCESS_KEY_ID=''
+S3_SECRET_ACCESS_KEY=''

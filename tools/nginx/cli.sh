@@ -7,7 +7,7 @@ set -euo pipefail
 COMMAND=${1:-help}
 shift || true
 
-# Cascade args (--conf/--name) for sandboxed/embedded use
+# Parse instance settings and naming options.
 CONF_FILE=""
 NAME_OVERRIDE=""
 while [ $# -gt 0 ]; do

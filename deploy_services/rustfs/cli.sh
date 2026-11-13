@@ -10,13 +10,12 @@ shift || true
 CONF_FILE=""
 NAME_OVERRIDE=""
 INTERNAL_ONLY=false
-EXTRA_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --conf) CONF_FILE="$2"; shift 2 ;;
         --name) NAME_OVERRIDE="$2"; shift 2 ;;
         --internal) INTERNAL_ONLY=true; shift ;;
-        *) EXTRA_ARGS+=("$1"); shift ;;
+        *) echo "[ERROR] Unknown option: $1" >&2; exit 2 ;;
     esac
 done
 
@@ -24,11 +23,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TPL_DIR="$SCRIPT_DIR/templates"
 CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_rustfs.conf}"
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
+CONF_FILE="$CONF_DIR/$(basename "$CONF_FILE")"
+COMPOSE_FILE="${CONF_FILE%.conf}.compose.yaml"
 IMAGE="rustfs/rustfs:latest"
-HOOK_RUN_ARGS=()
-
-[ -f "$SCRIPT_DIR/hooks.sh" ] && source "$SCRIPT_DIR/hooks.sh"
-hook() { if declare -F "$1" >/dev/null; then "$1"; fi; }
+DOCKER_NETWORK=""
+RUSTFS_PUBLISH_PORTS=true
 
 # -----------------------------------------------------------------------------
 # 2. Utility Functions
@@ -36,8 +35,6 @@ hook() { if declare -F "$1" >/dev/null; then "$1"; fi; }
 hr() { echo "-----------------------------------------------------------------------------"; }
 random_port() { shuf -i 30000-40000 -n 1; }
 random_secret() { openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32; }
-
-container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
 
 rustfs_uid_gid() (
     local probe_name passwd_dir passwd_file uid_gid
@@ -69,26 +66,52 @@ ensure_data_owner() {
     fi
 }
 
-normalize_conf() {
-    sed -i 's/\r$//' "$CONF_FILE"
-}
-
-require_conf() {
+load_settings() {
     if [ ! -f "$CONF_FILE" ]; then
         echo "[ERROR] [RustFS] $CONF_FILE not found. Run 'bash cli.sh init' first."
         exit 1
     fi
-    normalize_conf
+    # Read CRLF files without rewriting existing credentials.
+    set -a
+    source <(sed 's/\r$//' "$CONF_FILE")
+    set +a
+    if [ "$INTERNAL_ONLY" = true ]; then
+        RUSTFS_PUBLISH_PORTS=false
+    fi
+    export IMAGE DOCKER_NETWORK RUSTFS_PUBLISH_PORTS
+    if [[ ! "$INSTANCE_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+        echo "[ERROR] INSTANCE_NAME must match [a-z0-9][a-z0-9_-]*." >&2
+        exit 1
+    fi
+}
+
+compose() {
+    docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
+        --project-name "$INSTANCE_NAME" -f "$COMPOSE_FILE" "$@"
+}
+
+require_managed_container() {
+    local container labels
+    container="$(docker container ls -a --filter "name=^/${INSTANCE_NAME}$" --format '{{.Names}}')"
+    [ -n "$container" ] || return 0
+    labels="$(docker container inspect --format '{{index .Config.Labels "com.docker.compose.project"}}/{{index .Config.Labels "com.docker.compose.service"}}' "$INSTANCE_NAME")"
+    if [ "$labels" != "$INSTANCE_NAME/rustfs" ]; then
+        echo "[ERROR] '$INSTANCE_NAME' belongs to another deployment. Choose a unique INSTANCE_NAME; this container will not be modified." >&2
+        return 1
+    fi
 }
 
 # -----------------------------------------------------------------------------
 # 3. Service Config Rendering
 # -----------------------------------------------------------------------------
-generate_settings() {
-    local port=$(random_port)
-    local admin_port=$(random_port)
-    local access_key=$(random_secret)
-    local secret_key=$(random_secret)
+generate_settings() (
+    umask 077
+    local port admin_port access_key secret_key
+    port=$(random_port)
+    admin_port=$(random_port)
+    while [ "$admin_port" = "$port" ]; do admin_port=$(random_port); done
+    access_key=$(random_secret)
+    secret_key=$(random_secret)
     local name="$NAME_OVERRIDE"
     if [ -z "$name" ]; then
         local ts=$(date +%s)
@@ -101,6 +124,25 @@ generate_settings() {
         -e "s/{{RUSTFS_ACCESS_KEY}}/${access_key}/g" \
         -e "s/{{RUSTFS_SECRET_KEY}}/${secret_key}/g" \
         "$TPL_DIR/settings_rustfs.conf.tpl" > "$CONF_FILE"
+)
+
+generate_compose() {
+    cat "$TPL_DIR/compose.yaml.tpl" > "$COMPOSE_FILE"
+    if [ "$RUSTFS_PUBLISH_PORTS" = true ]; then
+        cat >> "$COMPOSE_FILE" <<'YAML'
+    ports:
+      - "${RUSTFS_PORT:?RUSTFS_PORT is required}:9000"
+      - "${RUSTFS_ADMIN_PORT:?RUSTFS_ADMIN_PORT is required}:9001"
+YAML
+    fi
+    if [ -n "$DOCKER_NETWORK" ]; then
+        cat >> "$COMPOSE_FILE" <<'YAML'
+networks:
+  default:
+    external: true
+    name: "${DOCKER_NETWORK}"
+YAML
+    fi
 }
 
 # -----------------------------------------------------------------------------
@@ -112,9 +154,8 @@ do_init() {
     hr
 
     [ ! -f "$CONF_FILE" ] && generate_settings
-    normalize_conf
-    source "$CONF_FILE"
-    hook on_init
+    load_settings
+    generate_compose
 
     # Pre-create the bind-mount data dir so Docker won't auto-create it as root
     mkdir -p "${CONF_DIR}/data/${INSTANCE_NAME}_data"
@@ -123,94 +164,79 @@ do_init() {
     echo "[SUCCESS] [RustFS] Initialization completed!"
     hr
     echo "[IMPORTANT] Recommended next steps:"
-    echo "  1. Review settings_rustfs.conf (ports / access key / secret key)"
-    echo "  2. Run 'bash cli.sh start' to bring up the service"
-    echo "Note: managed via plain 'docker run'; settings_rustfs.conf is the single config source."
+    echo "  1. Review $CONF_FILE (ports / access key / secret key / network)"
+    echo "  2. Run 'bash cli.sh start' to refresh YAML and start with Docker Compose"
+    echo "Compose definition: $COMPOSE_FILE (generated; edit templates/compose.yaml.tpl instead)"
     hr
 }
 
 do_start() {
-    require_conf
-    # Export all settings so 'docker run -e VAR' passes them through cleanly
-    set -a; source "$CONF_FILE"; set +a
+    load_settings
+    require_managed_container
     mkdir -p "${CONF_DIR}/data/${INSTANCE_NAME}_data"
     ensure_data_owner "${CONF_DIR}/data/${INSTANCE_NAME}_data"
-
-    local -a publish_args=()
-    if [ "$INTERNAL_ONLY" = false ]; then
-        publish_args=(-p "${RUSTFS_PORT}:9000" -p "${RUSTFS_ADMIN_PORT}:9001")
-    fi
-
-    hook on_start
+    generate_compose
 
     hr
     echo "[INFO] [RustFS] Starting service (Container: ${INSTANCE_NAME})..."
     hr
-    if container_exists; then
-        echo "[INFO] Container '${INSTANCE_NAME}' already exists, starting it..."
-        docker start "$INSTANCE_NAME" >/dev/null
-    else
-        docker run -d \
-            --name "$INSTANCE_NAME" \
-            "${HOOK_RUN_ARGS[@]}" \
-            "${publish_args[@]}" \
-            -v "${CONF_DIR}/data/${INSTANCE_NAME}_data:/data" \
-            -e RUSTFS_CONSOLE_ENABLE="true" \
-            -e RUSTFS_ACCESS_KEY \
-            -e RUSTFS_SECRET_KEY \
-            --health-cmd "wget -qO- http://localhost:9000/health >/dev/null 2>&1 || exit 1" \
-            --health-interval 5s \
-            --health-timeout 3s \
-            --health-retries 30 \
-            --restart unless-stopped \
-            "$IMAGE" \
-            --access-key "$RUSTFS_ACCESS_KEY" --secret-key "$RUSTFS_SECRET_KEY" /data >/dev/null
-    fi
+    compose up -d
     hr
-    echo "[SUCCESS] [RustFS] Service is up and running!"
-    if [ "$INTERNAL_ONLY" = true ]; then
+    echo "[SUCCESS] [RustFS] Container started; check Docker health status for readiness."
+    if [ "$RUSTFS_PUBLISH_PORTS" = false ]; then
         echo "S3 API and console are not published to host ports."
     else
         echo "S3 API:  http://<SERVER_IP>:${RUSTFS_PORT}"
         echo "Console: http://<SERVER_IP>:${RUSTFS_ADMIN_PORT} (local: http://localhost:${RUSTFS_ADMIN_PORT})"
-        echo "Access Key: ${RUSTFS_ACCESS_KEY}"
-        echo "Secret Key: ${RUSTFS_SECRET_KEY}"
     fi
-    if [ "$INTERNAL_ONLY" = true ]; then
-        echo "Credentials are stored in $CONF_FILE."
-    fi
+    echo "Docker network endpoints: http://${INSTANCE_NAME}:9000 (S3), http://${INSTANCE_NAME}:9001 (console)"
+    echo "Credentials are stored in $CONF_FILE."
+    hr
+}
+
+do_update() {
+    load_settings
+    require_managed_container
+    mkdir -p "${CONF_DIR}/data/${INSTANCE_NAME}_data"
+    generate_compose
+
+    hr
+    echo "[INFO] [RustFS] Pulling image and recreating the service if needed..."
+    hr
+    compose pull
+    # Resolve ownership from the newly pulled image before replacing the service.
+    ensure_data_owner "${CONF_DIR}/data/${INSTANCE_NAME}_data"
+    compose up -d
+    hr
+    echo "[SUCCESS] [RustFS] Image update completed; settings and data were preserved."
     hr
 }
 
 do_stop() {
-    require_conf
-    source "$CONF_FILE"
+    load_settings
+    require_managed_container
+    [ -f "$COMPOSE_FILE" ] || generate_compose
     hr
     echo "[INFO] [RustFS] Stopping service..."
     hr
-    docker stop "$INSTANCE_NAME" 2>/dev/null || true
-    hook on_stop
+    compose stop
 }
 
 do_rm() {
-    require_conf
-    source "$CONF_FILE"
+    load_settings
+    require_managed_container
+    [ -f "$COMPOSE_FILE" ] || generate_compose
     hr
     echo "[INFO] [RustFS] Removing container..."
     hr
-    docker stop "$INSTANCE_NAME" 2>/dev/null || true
-    docker rm "$INSTANCE_NAME" 2>/dev/null || true
-    hook on_rm
+    compose down
 }
 
 do_purge() {
-    require_conf
-    source "$CONF_FILE"
+    do_rm
     hr
     echo "[WARN] WARNING: Preparing to completely destroy RustFS data!"
     hr
-    docker stop "$INSTANCE_NAME" 2>/dev/null || true
-    docker rm "$INSTANCE_NAME" 2>/dev/null || true
 
     # Clean up local data directory but preserve configs
     local data_dir="${CONF_DIR}/data/${INSTANCE_NAME}_data"
@@ -221,8 +247,6 @@ do_purge() {
         docker run --rm -v "${CONF_DIR}/data:/purge" alpine rm -rf "/purge/${INSTANCE_NAME}_data"
     fi
 
-    hook on_purge
-
     hr
     echo "[SUCCESS] [RustFS] Data has been purged (configs preserved)."
     hr
@@ -230,28 +254,29 @@ do_purge() {
 
 do_reset() {
     do_purge
-    echo "[INFO] [RustFS] Removing all generated settings under this service..."
-    rm -f "$CONF_DIR"/settings*.conf
+    echo "[INFO] [RustFS] Removing this instance's settings and generated YAML..."
+    rm -f -- "$CONF_FILE" "$COMPOSE_FILE"
     hr
     echo "[SUCCESS] [RustFS] Reset complete (restored to pristine source files)."
     hr
 }
 
 do_help() {
-    echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME] [--internal]"
-    echo "  init    : Generate settings_rustfs.conf and create data dir, without starting"
-    echo "  start   : Start the container (run if absent, otherwise just start it)"
+    echo "Usage: $0 {init|start|up|update|stop|rm|purge|reset} [--conf PATH] [--name NAME] [--internal]"
+    echo "  init    : Generate settings if absent, then Compose YAML and data dir; do not start"
+    echo "  start   : Refresh Compose YAML and run docker compose up -d"
+    echo "  update  : Pull the configured image and recreate the service if needed"
     echo "  up      : Initialize config and start the container instantly"
     echo "  stop    : Stop the running container"
     echo "  rm      : Remove the container (Preserves ./data and settings_rustfs.conf)"
     echo "  purge   : DANGER - Remove container AND permanently delete ./data (Preserves settings_rustfs.conf)"
-    echo "  reset   : DANGER - purge AND delete ALL settings (back to pristine source files)"
+    echo "  reset   : DANGER - purge AND delete only this config and its generated YAML"
     echo ""
-    echo "Options (for embedding as a sub-service under another app):"
+    echo "Options:"
     echo "  --conf PATH : Config file location (default: <script_dir>/settings_rustfs.conf)."
     echo "                Data dir is derived as <dir-of-conf>/data/<INSTANCE_NAME>_data."
     echo "  --name NAME : Full instance name to write at init (default: auto 'rustfs_<ts>')."
-    echo "  --internal  : Do not publish the S3 API or admin console host ports."
+    echo "  --internal  : Do not publish ports for this start command (persist RUSTFS_PUBLISH_PORTS=false to keep private)."
 }
 
 # -----------------------------------------------------------------------------
@@ -260,11 +285,11 @@ do_help() {
 case "$COMMAND" in
     init)    do_init ;;
     start)   do_start ;;
-    up)      do_init && do_start ;;
+    up)      do_init; do_start ;;
+    update)  do_update ;;
     stop)    do_stop ;;
     rm)      do_rm ;;
     purge)   do_purge ;;
     reset)   do_reset ;;
-    network) if declare -F on_network >/dev/null; then require_conf; source "$CONF_FILE"; on_network "${EXTRA_ARGS[@]}"; else do_help; fi ;;
     *)       do_help ;;
 esac

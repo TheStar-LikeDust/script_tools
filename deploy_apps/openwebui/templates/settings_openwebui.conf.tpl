@@ -1,11 +1,37 @@
 # Open WebUI Settings
 INSTANCE_NAME="{{INSTANCE_NAME}}"
+IMAGE="ghcr.io/open-webui/open-webui:main"
+DOCKER_NETWORK=""
 
 # Host Port
 OPENWEBUI_PORT="{{OPENWEBUI_PORT}}"
+OPENWEBUI_PUBLISH_PORT="true"
 
 # JWT Secret (Auto-generated)
-WEBUI_SECRET_KEY="{{WEBUI_SECRET_KEY}}"
+WEBUI_SECRET_KEY='{{WEBUI_SECRET_KEY}}'
+
+# Leave DB_HOST empty to keep the existing SQLite database in the local data dir.
+# Changing to PostgreSQL does not migrate SQLite data.
+# Fill all DB_* values for an administrator-provisioned database/account.
+DB_HOST=""
+DB_PORT="5432"
+DB_NAME="openwebui"
+DB_USER="openwebui"
+DB_PASSWORD=''
+DB_SSLMODE="disable"
+
+# Optional external Redis and object storage; provision them independently.
+# URI credentials must be percent-encoded.
+REDIS_URL=''
+STORAGE_PROVIDER="local"
+S3_ENDPOINT_URL=""
+S3_ACCESS_KEY_ID=''
+S3_SECRET_ACCESS_KEY=''
+S3_BUCKET_NAME=""
+S3_REGION_NAME="us-east-1"
+
+# Set False only when environment settings should override persisted UI settings.
+ENABLE_PERSISTENT_CONFIG="True"
 
 # Optional: External LLM APIs
 OLLAMA_BASE_URL="http://host.docker.internal:11434"

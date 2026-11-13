@@ -2,232 +2,200 @@
 
 ## 1. 简介
 
-> LobeHub 是 AI 对话与知识库应用。本方案部署官方 LobeHub 镜像，并在专属 Docker 网络中管理 ParadeDB（PostgreSQL 17）、Redis 和 RustFS。
+> LobeHub 是 AI 对话与知识库应用。本目录使用 Docker Compose 部署 LobeHub 应用容器，并连接独立管理的 PostgreSQL、Redis 与 S3 兼容存储。
 
-使用 LobeHub 内置邮箱密码认证，并复用项目的 Redis 服务和 RustFS S3 兼容存储。无需手动填写 S3 地址、访问密钥或创建 Bucket；未配置 SMTP 时不能通过邮件找回密码。Composio 和 Casdoor 都是可选的外部服务。
+管理员先启动基础服务，创建应用专用数据库、账号、Bucket 和访问凭证，再填写 `settings_lobechat.conf`。应用保留内置邮箱密码登录；Composio 和 Casdoor 均为可选外部服务，未配置 SMTP 时不能通过邮件找回密码。
 
 ## 2. 核心配置项
 
 ### settings_lobechat.conf
 
-- `INSTANCE_NAME`：LobeHub 容器名。
-- `LOBECHAT_PORT`：宿主机访问端口。
-- `IMAGE`：LobeHub 镜像，默认 `lobehub/lobehub:latest`。
-- `APP_URL`：浏览器访问应用时使用的完整地址；反向代理场景填写代理后的 HTTPS 地址。
-- `KEY_VAULTS_SECRET`、`AUTH_SECRET`、`JWKS_KEY`：应用加密与认证密钥；备份时需与数据库一并保留。
-- `AUTH_ALLOWED_EMAILS`：邮箱或域名注册允许列表；`init` 默认写入一个随机的 `example.invalid` 占位邮箱，启动前需替换为实际邮箱或域名。
-- `COMPOSIO_API_KEY`：可选的 Composio 服务端 API Key；不使用 Composio 时留空。
-- `AUTH_SSO_PROVIDERS`：可选的 SSO 提供商列表；留空时仅使用邮箱密码登录，启用 Casdoor 时填写 `casdoor`。
-- `AUTH_CASDOOR_ID`、`AUTH_CASDOOR_SECRET`、`AUTH_CASDOOR_ISSUER`：Casdoor OIDC 客户端 ID、密钥和 Issuer；仅在启用 Casdoor 时填写。
-- `ENABLED_OPENAI`：是否启用 OpenAI 服务，默认 `1`。
-- `OPENAI_API_KEY`：OpenAI 或 OpenAI 兼容服务的 API Key。
-- `OPENAI_PROXY_URL`：OpenAI API 地址；使用第三方兼容服务时填写其可从 Docker 容器访问的 `/v1` 地址。
-- `OPENAI_MODEL_LIST`：启动时提供的模型列表，默认 `gpt-4o-mini`；使用其他模型时改为服务商支持的模型名。
-- `REDIS_DATABASE`、`REDIS_PREFIX`：Redis 数据库编号和键前缀。Redis 容器地址由启动脚本自动生成。
-- `S3_BUCKET`：RustFS 中供 LobeHub 使用的 Bucket，默认 `lobechat`；启动时自动创建。
-- `S3_ENDPOINT`、`S3_ACCESS_KEY_ID`、`S3_SECRET_ACCESS_KEY`：由启动脚本从 RustFS 配置生成并传入容器，无需手动设置。
+- `INSTANCE_NAME`：Compose 项目名和容器名，须符合 `[a-z0-9][a-z0-9_-]*`，同机不同实例使用不同名称。
+- `IMAGE`：默认 `lobehub/lobehub:latest`，为滚动标签；可填写具体版本标签或 digest。
+- `LOBECHAT_PORT`：宿主机访问端口，映射容器内 `3210`。
+- `DOCKER_NETWORK`：管理员预建的共享 Docker 网络；空值使用本项目私有网络。
+- `DB_HOST` / `DB_PORT`：PostgreSQL 地址和端口，默认端口 `5432`。
+- `DB_NAME` / `DB_USER` / `DB_PASSWORD`：预先创建的应用数据库、专用账号和密码，库名和账号默认 `lobechat`。
+- `DB_SSLMODE`：PostgreSQL TLS 模式，默认 `disable`；远程连接按服务要求设置。
+- `APP_URL`：浏览器访问应用的完整地址；反向代理场景使用代理后的 HTTPS 地址。
+- `KEY_VAULTS_SECRET` / `AUTH_SECRET` / `JWKS_KEY`：应用加密与认证密钥，迁移和恢复时必须保留原值。
+- `AUTH_ALLOWED_EMAILS`：注册邮箱或域名允许列表；将初始随机 `example.invalid` 占位邮箱替换为实际值。
+- `REDIS_URL`：人工填写的 Redis URI，例如 `redis://redis_lobechat:6379/0`，TLS 使用 `rediss://`。
+- `REDIS_DATABASE` / `REDIS_PREFIX`：Redis 数据库编号和键前缀；默认编号 `0`、前缀为实例名，备份恢复时保留对应值。URI 中的数据库编号应与 `REDIS_DATABASE` 一致。
+- `S3_ENDPOINT` / `S3_BUCKET`：S3 API 地址与已创建的 Bucket；无默认 Bucket，脚本不会创建 Bucket。
+- `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`：仅有本应用专属 Bucket 所需权限的访问凭证；共享 RustFS 时每个应用使用不同 Bucket 与凭证。
+- `ENABLED_OPENAI` / `OPENAI_API_KEY` / `OPENAI_PROXY_URL` / `OPENAI_MODEL_LIST`：模型供应商设置；兼容服务填写其容器可访问的 `/v1` 地址和模型名。
+- `COMPOSIO_API_KEY`：可选的 Composio API Key。
+- `AUTH_SSO_PROVIDERS` / `AUTH_CASDOOR_ID` / `AUTH_CASDOOR_SECRET` / `AUTH_CASDOOR_ISSUER`：可选 Casdoor OIDC 配置；启用时将 `AUTH_SSO_PROVIDERS` 设为 `casdoor`。
 
-### settings_paradedb.conf
+### settings_lobechat.compose.yaml
 
-- `INSTANCE_NAME`：PostgreSQL 容器名。
-- `DB_USER`、`DB_PASSWORD`、`DB_NAME`：数据库连接凭据。
-- `DB_PUBLISH_PORT`：新实例默认设为 `false`，数据库只通过专属 Docker 网络访问。
-- `DB_PORT`：宿主机数据库端口；仅在启用端口发布时使用。
-
-### settings_redis.conf
-
-由项目已有的 `deploy_services/redis` 服务管理。LobeChat 通过专属 Docker 网络以 `redis://<Redis容器名>:6379/<REDIS_DATABASE>` 连接；无需手动填写 Redis URL。
-
-数据库数据保存在配置文件目录下的 `data/<数据库容器名>_data/`。
-
-Redis 数据保存在配置文件目录下的 `data/<Redis容器名>_data/`。RustFS 配置保存在同目录的 `settings_rustfs.conf`，其中包含生成的访问密钥；对象数据保存在对应的 `data/<RustFS容器名>_data/`。旧版 `settings_<LobeHub实例名>_rustfs.conf` 会在首次生命周期操作时迁移为固定文件名，保留原有凭据、容器名和数据目录。
+`init`、`start`、`update` 从 `templates/compose.yaml.tpl` 刷新此文件。YAML 只保存变量引用；`cli.sh` 读取 Bash settings 后导出变量供 Compose 使用。持久修改容器定义应编辑模板，生成文件下次会被刷新。
 
 ## 3. 备注
 
-- 官方数据库部署示例使用 ParadeDB PostgreSQL 17 镜像，并在 PostgreSQL 启动时启用 `pg_search`。本脚本以容器名生成 `DATABASE_URL`，不向宿主机发布数据库端口。
-- `init` 会生成应用密钥、ParadeDB、Redis 和 RustFS 配置。宿主机需有 Node.js 以生成 JWKS；没有 Node.js 时，脚本使用 LobeHub 镜像临时生成密钥。
-- ParadeDB、Redis 与 RustFS 配置由对应服务脚本管理。备份时同时保留应用配置、数据库配置、Redis 配置、RustFS 配置及各自的数据目录。
-- `init` 会生成随机的 `example.invalid` 白名单邮箱；邮箱密码登录仍然开启，但在你把它改成实际邮箱前不会允许真实账户注册。
-- `start` 自动启动 Redis 和私有 RustFS，按镜像内置用户修正 RustFS 数据目录所有权，并通过一次性 AWS CLI 容器创建或复用 Bucket；RustFS API 和管理端口不会发布到宿主机。
-- 若已有 LobeHub 容器的模型、Redis、S3、Composio 或认证环境变量与配置不符，`start` 会重建应用容器，数据库、Redis 和 RustFS 数据不受影响。
-- `rm` 删除容器但保留数据库、Redis 和 RustFS 数据；`purge` 会永久删除数据库、Redis 和 RustFS 对象数据；`reset` 还会删除生成的应用、数据库、Redis 和 RustFS 配置。
-- 旧全栈配置中的 `USE_INTERNAL_*` / `EXTERNAL_*` 不兼容当前配置。切换方案会创建新数据库，不会迁移旧账户和聊天记录，也不会停止或删除旧 Casdoor、Redis、RustFS 容器及数据。
+- PostgreSQL 需符合所选 LobeHub 镜像的版本和扩展要求。ParadeDB 的 `pg_search` 预加载由数据库服务负责；数据库内所需扩展和权限由管理员提前准备，应用账号只管理自己的库和业务结构。
+- `DB_PASSWORD` 填写原始密码，脚本会对数据库用户名、密码和库名做 URI 百分号编码后生成 `DATABASE_URL`。Bash settings 中的密钥宜用单引号；Redis URI 中的密码需按 URI 规则自行编码。
+- Redis 数据库编号和键前缀用于数据区分，并不构成权限隔离。本仓库 Redis 服务当前没有认证；共享场景需另行配置认证/ACL，或为应用独立部署 Redis。
+- S3 预签名链接可能由浏览器直接访问。`S3_ENDPOINT` 应使用应用容器和浏览器均可访问的稳定地址；共享网络中的容器名或私有 IP 通常不能被浏览器解析。生产环境可配置 S3 API 的 HTTPS 反向代理和所需 CORS，不能使用控制台端口替代 API。
+- 容器内 `localhost` 指当前容器。数据库、Redis、模型服务和 S3 地址不能误填 `localhost`；模板里的 `INTERNAL_APP_URL=http://localhost:3210` 则明确指 LobeHub 自身。
+- JWKS 优先通过宿主机 Node.js 生成；没有 Node.js 时，仅在首次生成配置时使用 LobeHub 镜像运行一次密钥生成程序。
+- 本应用容器没有本地 bind mount。业务数据在 PostgreSQL、Redis 与 S3 中，`purge` 与 `rm` 均只移除应用项目。`reset` 额外删除本应用的 settings 和 YAML，因此仍需事先保存应用密钥。
+- `start` 与 `update` 成功只表示 Compose 已启动容器。使用 `docker logs -f <INSTANCE_NAME>` 检查数据库迁移及就绪情况。
+- 同名容器属于其他 Compose 项目或服务时，CLI 拒绝操作；不同部署使用唯一实例名。`--conf` 父目录须已存在，生成 YAML 位于该目录，CLI 和模板仍从脚本目录读取。
 
 ## 4. 快速执行
 
+先由管理员创建共享网络，并在需要连接的基础服务 settings 中配置相同的 `DOCKER_NETWORK` 后启动基础服务：
+
 ```bash
+docker network create shared_services
 cd deploy_apps/lobechat
 bash cli.sh init
-# 修改 settings_lobechat.conf 中的 APP_URL、OPENAI_API_KEY 和模型配置
-# 将 AUTH_ALLOWED_EMAILS 的 example.invalid 占位邮箱改成实际邮箱或域名
-# 第三方 OpenAI 兼容服务填写 OPENAI_PROXY_URL、OPENAI_API_KEY 和 OPENAI_MODEL_LIST
-# 按需填写 COMPOSIO_API_KEY 或 Casdoor 的 AUTH_* 配置
+# Fill connections, APP_URL, AUTH_ALLOWED_EMAILS and model settings.
 bash cli.sh start
 ```
 
-`up` 等价于依次执行 `init` 和 `start`，适合已确认配置的实例。应用启动后可通过 `docker logs -f <INSTANCE_NAME>` 查看数据库迁移和服务就绪日志。
+同机连接示例，合并到生成的 settings，保留原有应用密钥：
+
+```bash
+DOCKER_NETWORK="shared_services"
+DB_HOST="paradedb_shared"
+DB_PORT="5432"
+DB_NAME="lobechat"
+DB_USER="lobechat"
+DB_PASSWORD='管理员提供的原始密码'
+DB_SSLMODE="disable"
+REDIS_URL='redis://redis_lobechat:6379/0'
+REDIS_DATABASE="0"
+REDIS_PREFIX="lobechat_main"
+S3_ENDPOINT="https://s3.example.com"
+S3_BUCKET="lobechat"
+S3_ACCESS_KEY_ID='应用专用访问密钥'
+S3_SECRET_ACCESS_KEY='应用专用访问密码'
+APP_URL="https://chat.example.com"
+AUTH_ALLOWED_EMAILS="user@example.com"
+```
+
+`paradedb_shared`、`redis_lobechat` 是基础服务的明确实例容器名；使用容器端口 `5432`、`6379`。S3 示例通过固定域名接入同机反向代理，保证浏览器也能访问。
+
+远程服务示例：
+
+```bash
+DOCKER_NETWORK=""
+DB_HOST="db.example.com"
+DB_PORT="5432"
+DB_SSLMODE="require"
+REDIS_URL='rediss://lobechat:percent-encoded-password@redis.example.com:6380/1'
+REDIS_DATABASE="1"
+S3_ENDPOINT="https://s3.example.com"
+```
+
+远程场景继续填写独立数据库、账号和 S3 凭证，端口使用远程实际开放端口。认证服务的 Issuer 和模型 API 地址同样须从容器可达。
+
+```bash
+# Use init + start when settings are ready.
+bash cli.sh up
+
+# Update this application's image.
+bash cli.sh update
+
+# Stop or remove the app while keeping settings.
+bash cli.sh stop
+bash cli.sh rm
+
+# No local app data; external service data is preserved.
+bash cli.sh purge
+
+# DANGER: also delete this app's settings and keys.
+bash cli.sh reset
+```
 
 ## 5. 命令解释
 
+以下 `compose` 指 `cli.sh` 内部包装函数，固定传入当前配置目录、项目名、生成的 YAML 和 `--env-file /dev/null`；日常操作使用 `bash cli.sh <命令>`。
+
 #### init
 
-生成应用密钥、ParadeDB、Redis 和 RustFS 配置，不启动容器。
+只在缺失时生成应用 settings 和密钥，再刷新 Compose YAML。JWKS 优先用宿主机 Node.js 生成，否则运行一次性应用容器；不启动常驻服务，不创建业务数据库或 Bucket。
 
 ```bash
-[ ! -f "$CONF_FILE" ] && generate_settings
-load_conf
-hook on_init
-ensure_rustfs_conf
-ensure_redis_conf
+bash cli.sh init
 ```
 
 #### start
 
-先启动 ParadeDB、Redis 和 RustFS 并接入专属网络，等待健康检查后自动创建 Bucket，再创建或启动 LobeHub。
+校验连接字段，刷新 YAML 并启动应用；Compose 根据配置变化重新创建所需容器。
 
 ```bash
-net_ensure "$net"
-redis_conf="$CONF_DIR/settings_redis.conf"
-redis_name="$(conf_val "$redis_conf" INSTANCE_NAME)"
-deploy_paradedb start
-deploy_redis start
-net_connect "$net" "$db_name"
-net_connect "$net" "$redis_name"
-wait_healthy "database" "$db_name"
-wait_healthy "Redis" "$redis_name"
-
-ensure_rustfs_conf
-rustfs_conf="$(rustfs_conf_path)"
-rustfs_name="$(conf_val "$rustfs_conf" INSTANCE_NAME)"
-deploy_rustfs start --internal
-net_connect "$net" "$rustfs_name"
-wait_healthy "RustFS" "$rustfs_name"
-access_key="$(conf_val "$rustfs_conf" RUSTFS_ACCESS_KEY)"
-secret_key="$(conf_val "$rustfs_conf" RUSTFS_SECRET_KEY)"
-rustfs_ip="$(docker inspect --format "{{(index .NetworkSettings.Networks \"$net\").IPAddress}}" "$rustfs_name")"
-S3_ENDPOINT="http://${rustfs_ip}:9000"
-S3_BUCKET="${S3_BUCKET:-lobechat}"
-S3_ACCESS_KEY_ID="$access_key"
-S3_SECRET_ACCESS_KEY="$secret_key"
-ensure_s3_bucket "$net" "$S3_ENDPOINT" "$S3_BUCKET" "$access_key" "$secret_key"
-REDIS_URL="redis://${redis_name}:6379/${REDIS_DATABASE}"
-HOOK_RUN_ARGS=(--network "$net")
-
-db_url="postgres://$(conf_val "$PG_CONF" DB_USER):$(conf_val "$PG_CONF" DB_PASSWORD)@$(conf_val "$PG_CONF" INSTANCE_NAME):5432/$(conf_val "$PG_CONF" DB_NAME)"
-
-docker run -d \
-    --name "$INSTANCE_NAME" \
-    "${HOOK_RUN_ARGS[@]}" \
-    -p "${LOBECHAT_PORT}:3210" \
-    -e "DATABASE_URL=${db_url}" \
-    -e "APP_URL=${APP_URL}" \
-    -e "INTERNAL_APP_URL=http://localhost:3210" \
-    -e "KEY_VAULTS_SECRET=${KEY_VAULTS_SECRET}" \
-    -e "AUTH_SECRET=${AUTH_SECRET}" \
-    -e "JWKS_KEY=${JWKS_KEY}" \
-    -e "AUTH_SSO_PROVIDERS=${AUTH_SSO_PROVIDERS:-}" \
-    -e "AUTH_CASDOOR_ID=${AUTH_CASDOOR_ID:-}" \
-    -e "AUTH_CASDOOR_SECRET=${AUTH_CASDOOR_SECRET:-}" \
-    -e "AUTH_CASDOOR_ISSUER=${AUTH_CASDOOR_ISSUER:-}" \
-    -e "AUTH_DISABLE_EMAIL_PASSWORD=0" \
-    -e "AUTH_EMAIL_VERIFICATION=0" \
-    -e "AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS:-}" \
-    -e "COMPOSIO_API_KEY=${COMPOSIO_API_KEY:-}" \
-    -e "ENABLED_OPENAI=${ENABLED_OPENAI:-1}" \
-    -e "OPENAI_API_KEY=${OPENAI_API_KEY:-}" \
-    -e "OPENAI_PROXY_URL=${OPENAI_PROXY_URL:-}" \
-    -e "OPENAI_MODEL_LIST=${OPENAI_MODEL_LIST:-}" \
-    -e "REDIS_URL=${REDIS_URL}" \
-    -e "REDIS_DATABASE=${REDIS_DATABASE:-0}" \
-    -e "REDIS_PREFIX=${REDIS_PREFIX:-lobechat}" \
-    -e "S3_ENDPOINT=${S3_ENDPOINT}" \
-    -e "S3_BUCKET=${S3_BUCKET}" \
-    -e "S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}" \
-    -e "S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}" \
-    -e "S3_ENABLE_PATH_STYLE=1" \
-    --restart unless-stopped \
-    "$IMAGE"
+compose up -d
 ```
 
 #### up
 
-初始化配置后启动应用、数据库、Redis 和 RustFS。
+先生成缺失配置，再启动应用；外部连接字段为空时明确报错，需先人工配置。
 
 ```bash
-do_init
-do_start
+bash cli.sh up
+```
+
+#### update
+
+拉取当前 `IMAGE` 指定的镜像，再应用配置，保留 settings、密钥和外部数据。
+
+```bash
+compose pull
+compose up -d
 ```
 
 #### stop
 
-停止 LobeHub、ParadeDB、Redis 和 RustFS 容器，保留配置与数据。
+只停止 LobeHub 应用容器。
 
 ```bash
-docker stop "$INSTANCE_NAME" 2>/dev/null || true
-deploy_paradedb stop
-deploy_redis stop
-deploy_rustfs stop
+compose stop
 ```
 
 #### rm
 
-删除应用、数据库、Redis 和 RustFS 容器及专属网络，保留配置与数据。
+移除应用项目的容器及私有网络，保留 settings；共享外部网络和基础服务不受影响。
 
 ```bash
-docker stop "$INSTANCE_NAME" 2>/dev/null || true
-docker rm "$INSTANCE_NAME" 2>/dev/null || true
-deploy_paradedb rm
-deploy_redis rm
-deploy_rustfs rm
-net_rm "${INSTANCE_NAME}_net"
+compose down
 ```
 
 #### purge
 
-危险操作：删除应用、数据库、Redis 和 RustFS 容器及其数据，保留配置文件。
+本应用没有本地 bind mount，因此仅执行 `rm`，保留 settings 和所有外部数据。
 
 ```bash
-docker stop "$INSTANCE_NAME" 2>/dev/null || true
-docker rm "$INSTANCE_NAME" 2>/dev/null || true
-data_dir="${CONF_DIR}/data/${INSTANCE_NAME}_data"
-if [ -d "$data_dir" ]; then
-    docker run --rm -v "${CONF_DIR}/data:/purge" alpine rm -rf "/purge/${INSTANCE_NAME}_data"
-fi
-deploy_paradedb purge
-deploy_redis purge
-deploy_rustfs purge
-net_rm "${INSTANCE_NAME}_net"
+bash cli.sh purge
 ```
 
 #### reset
 
-危险操作：先执行 `purge`，再删除应用、ParadeDB、Redis 和 RustFS 配置文件。
+先移除应用项目，再仅删除当前 `--conf` 指定的 settings 和对应 YAML；不匹配或删除任何其他配置文件。
 
 ```bash
-do_purge
-rm -f "$CONF_FILE" "$PG_CONF" "$REDIS_CONF" "$(rustfs_conf_path)"
+bash cli.sh reset
 ```
 
-## 6. 升级与旧实例迁移
+#### network ls
 
-更新应用环境变量或镜像前，先备份数据库。按需拉取新镜像，然后删除应用容器并重新执行 `start`；不要用 `purge` 或 `reset` 作为升级命令。
+只读展示 `DOCKER_NETWORK` 指定的共享网络，或本项目的私有网络。
 
 ```bash
-source settings_lobechat.conf
-docker pull "$IMAGE"
-docker stop "$INSTANCE_NAME"
-docker rm "$INSTANCE_NAME"
-bash cli.sh start
+bash cli.sh network ls
 ```
 
-旧版全栈实例应先使用独立的 `--conf` 路径试运行。新实例拥有独立数据库，账户与聊天记录不会自动迁移。
+## 6. 升级、备份与复制恢复
 
-```bash
-mkdir -p minimal
-bash cli.sh init --conf "$PWD/minimal/settings_lobechat.conf" --name lobechat_minimal
-bash cli.sh start --conf "$PWD/minimal/settings_lobechat.conf"
-```
+镜像升级使用 `update`。镜像可能自动迁移数据库结构，因此升级前按镜像发布说明备份数据库，并记录对应镜像版本；镜像回退不等于数据库回滚。
 
-使用 `bash cli.sh network` 可查看应用专属网络及已连接容器。
+应用没有本地数据挂载。复制应用目录时携带 CLI、templates、settings 和生成 YAML，保留 `KEY_VAULTS_SECRET`、`AUTH_SECRET`、`JWKS_KEY`、模型和认证配置。settings 中的密钥须与数据库备份对应，不能通过 `reset` 重新生成替代密钥。
+
+停止写入或完成一致性备份后，PostgreSQL、Redis 和 S3 数据由各自基础服务目录分别备份和恢复。保持 Redis 编号、键前缀、S3 Bucket 与凭证对应；仅复制应用目录不会带走聊天记录和附件。
+
+目标机器准备共享网络，填写可达的依赖地址、应用 URL 与认证回调地址后运行 `start`。S3 地址仍需对浏览器和应用容器同时可达。使用外置 `--conf` 时同时携带对应 CLI 和模板。
 
 官方参考：[Docker 数据库版部署](https://lobehub.com/docs/self-hosting/platform/docker)、[模型供应商环境变量](https://lobehub.com/docs/self-hosting/environment-variables/model-provider)、[认证环境变量](https://lobehub.com/docs/self-hosting/environment-variables/auth)。

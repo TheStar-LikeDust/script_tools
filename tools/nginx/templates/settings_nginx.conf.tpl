@@ -3,7 +3,7 @@
 # Site config filename in nginx conf.d (auto-generated on first start)
 INSTANCE_NAME="nginx_XXXX"
 
-# Public hostname; use _ to match any host
+# Public hostname; _ is a placeholder, not a wildcard or default_server directive.
 SERVER_NAME="_"
 
 # Public port nginx listens on (governed by UFW as a normal host process)

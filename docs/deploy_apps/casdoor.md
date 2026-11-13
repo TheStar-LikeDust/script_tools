@@ -2,146 +2,170 @@
 
 ## 1. 简介
 
-> Casdoor 是一个支持 OAuth 2.0 / OIDC / SAML / CAS 的 UI 优先型身份与访问管理（IAM）平台，作为多应用架构的统一认证入口，提供开箱即用的集中式登录页、用户管理看板以及单点登录（SSO）与细粒度权限控制。
+> Casdoor 是支持 OAuth 2.0、OIDC、SAML 等协议的身份与访问管理平台。
 
-它本身不存储业务数据，强依赖 PostgreSQL。部署时提供分歧路由：默认 `init` 会通过级联机制拉起并动态组网专属的 ParadeDB 实例；使用 `init --external` 则彻底剥离内部数据库依赖，转为连接外部目标库。
+本目录通过 Docker Compose 仅部署 Casdoor。PostgreSQL 必须独立启动，由管理员预建 Casdoor 专用数据库和账号；应用命令不创建、启停或清理数据库。
 
 ## 2. 核心配置项
 
 ### settings_casdoor.conf
 
-- `INSTANCE_NAME`: 实例名（时间戳后缀，如 `casdoor_8421`），决定容器名与数据目录。
-- `CASDOOR_PORT`: 对外暴露的 Web UI / API 端口（容器内 `8000`）。
-- `CASDOOR_DB_NAME`: Casdoor 使用的应用库名（默认 `casdoor`，自动创建）。
-- `WITH_BUNDLED_DB`: `true` 附带 paradedb / `false` 用外部库。
-- `EXT_DB_HOST` / `EXT_DB_PORT` / `EXT_DB_USER` / `EXT_DB_PASSWORD` / `EXT_DB_NAME`: 仅外部模式使用，`EXT_DB_NAME` 为 bootstrap 库（通常 `postgres`）。
+- `INSTANCE_NAME`：Compose 项目名、容器名及本地数据目录前缀，只允许小写字母、数字、下划线和连字符，以字母或数字开头。
+- `IMAGE`：默认 `casbin/casdoor:latest`，可指定固定标签。
+- `CASDOOR_PORT`：宿主机 Web 端口，容器内部固定 `8000`。
+- `DOCKER_NETWORK`：管理员已创建的共享网络名；留空时使用本项目私有网络。
+- `DB_HOST` / `DB_PORT`：PostgreSQL 地址和端口，端口默认 `5432`。
+- `DB_NAME`：预先创建的专用业务库，默认 `casdoor`；本脚本支持以字母或下划线开头、仅含字母、数字和下划线的库名。
+- `DB_USER` / `DB_PASSWORD`：该业务库的专用账号和密码；不得填写共用的数据库超级账号。
+- `DB_SSLMODE`：PostgreSQL SSL 模式，默认 `disable`；远程接入按服务端配置调整。
 
-### settings_paradedb.conf
+### data/<INSTANCE_NAME>_config/app.conf
 
-- 包含附带的 paradedb 实例的连接凭证。
+Casdoor 程序读取的 INI 配置，包含数据库凭据，以 `600` 权限保存并只读挂载到 `/conf/app.conf`。`start` / `update` 从 settings 重新生成，需长期保留的调整应写入 settings 或 `templates/app.conf.tpl`。
 
 ## 3. 备注
 
-- 内部配置覆写机制：除部署层面的 `settings_casdoor.conf` 外，每次执行 `start` 还会动态渲染出供 Casdoor 程序本体读取的 INI 配置，落盘在专属目录 `data/<实例名>_config/app.conf` 并挂载入容器。请勿手动修改此 `app.conf`，所有相关配置调整必须在根目录的 `settings_casdoor.conf` 中进行。
+- `init` 先生成缺失的 settings，再生成 `settings_casdoor.compose.yaml`，不要求当时已填数据库地址，也不连接数据库。自定义 `--conf` 时，YAML 使用相同文件名前缀。
+- `start` / `update` 要求完整的 `DB_*`，数据库与账号须预先创建；`init` 不覆盖已有 settings，也不自动补写字段。
+- 数据库 DSN 使用 PostgreSQL 单引号规则转义，再单独处理模板替换转义，支持密码中的空格、引号、反斜线和 `$`；所有连接项必须为单行。settings 仍是 Bash 语法，例如字面值 `$` 应放在单引号中。
+- `app.conf` 内容摘要作为 Compose label，配置变化后再执行 `start` 会触发重建。YAML 只保存变量引用，密码不会直接写入 YAML。
+- 本应用的本地数据位于 `./data/<INSTANCE_NAME>_data`，业务数据库另由 PostgreSQL 服务目录管理。`purge` 不会清空 Casdoor 的外部数据库，因此不等于重新安装账号系统。
+- 同名容器属于其他 Compose 项目或服务时，CLI 拒绝操作；不同部署使用唯一实例名。
 
 ## 4. 快速执行
 
+先由管理员启动数据库、建库建号并配置共享网络，再初始化应用：
+
 ```bash
 cd deploy_apps/casdoor
-
-# 常规分步拉起（推荐）：先生成配置、按需修改 settings_casdoor.conf 后再启动
 bash cli.sh init
+# Fill DB_* and DOCKER_NETWORK in settings_casdoor.conf.
 bash cli.sh start
+```
 
-# 附带数据库，一键拉起（跳过配置直接启动，会同时起 paradedb 与 casdoor）
+同机共享网络示例（`shared_pg` 是数据库的 `INSTANCE_NAME`）：
+
+```bash
+DOCKER_NETWORK='shared_services'
+DB_HOST='shared_pg'
+DB_PORT='5432'
+DB_NAME='casdoor'
+DB_USER='casdoor'
+DB_PASSWORD='replace-with-the-existing-password'
+DB_SSLMODE='disable'
+```
+
+管理员预先执行 `docker network create shared_services`，数据库 settings 也需配置 `DOCKER_NETWORK='shared_services'` 并应用配置。使用数据库容器名和内部端口 `5432`；容器内的 `localhost` 指向 Casdoor 自身，不能用它连接另一个数据库容器。
+
+远程服务示例：
+
+```bash
+DOCKER_NETWORK=''
+DB_HOST='postgres.example.com'
+DB_PORT='5432'
+DB_NAME='casdoor'
+DB_USER='casdoor'
+DB_PASSWORD='replace-with-the-existing-password'
+DB_SSLMODE='require'
+```
+
+远程端口需填写服务实际对外监听端口，地址应可从应用容器访问；SSL 模式和 CA 校验要求需与数据库服务一致。
+
+```bash
+# Use init + start when settings are ready.
 bash cli.sh up
-
-# 使用外部数据库：先 init 生成配置，填好 settings_casdoor.conf 的 EXT_DB_*，再 start
-bash cli.sh init --external
-bash cli.sh start
-
-# 停止运行
+# Pull and apply the configured image.
+bash cli.sh update
 bash cli.sh stop
-
-# 销毁容器（保留配置与 data/ 数据目录）
 bash cli.sh rm
-
-# 危险操作：彻底销毁容器，并删除挂载的 data/ 数据目录
+# DANGER: delete local app data; preserve the external database.
 bash cli.sh purge
+# DANGER: also delete this app's settings, YAML and generated app.conf.
+bash cli.sh reset
 ```
 
 ## 5. 命令解释
 
-注：`--external` 是 init-only 开关，只在 `init`/`up` 阶段解析并写入 `settings_casdoor.conf` 的 `WITH_BUNDLED_DB` 项；其余生命周期命令一律从 `settings_casdoor.conf` 读取，无需也不接受该 flag。
+以下为日常入口；Compose 调用均由 CLI 带上配置目录、项目名、YAML 路径及导出的 settings 变量。
 
-#### init（可选 `--external`）
+#### init
 
-生成 `settings_casdoor.conf`（仅首次）；附带模式下委托 paradedb 生成 `settings_paradedb.conf` 与其数据目录；再读回连接渲染 `data/casdoor_<时间戳>_config/app.conf`，并预建 casdoor 数据目录。不启动容器。
+生成缺失 settings、刷新 Compose YAML 并预建应用数据目录，保留已有 settings；不启动容器。
 
 ```bash
-# 1) casdoor 自身配置（仅首次）
-sed -e "s/{{INSTANCE_NAME}}/casdoor_<时间戳>/g" \
-    -e "s/{{CASDOOR_PORT}}/<随机端口>/g" \
-    -e "s/{{WITH_BUNDLED_DB}}/true/g" \
-    "$SCRIPT_DIR/templates/settings_casdoor.conf.tpl" > settings_casdoor.conf
-
-# 2) 委托 paradedb（附带模式）——配置与数据都落在 casdoor 目录
-bash ../../deploy_services/paradedb/cli.sh init \
-    --conf "$CONF_DIR/settings_paradedb.conf" \
-    --name "casdoor_<时间戳>_paradedb"
-
-# 3) 读回 DB 连接渲染 app.conf（附带模式：host=paradedb 容器名, port=5432 内部端口）
-sed -e "s#{{CASDOOR_DB_USER}}#postgres#g" \
-    -e "s#{{CASDOOR_DB_PASSWORD}}#<paradedb 随机密码>#g" \
-    -e "s#{{CASDOOR_DB_HOST}}#casdoor_<时间戳>_paradedb#g" \
-    -e "s#{{CASDOOR_DB_PORT}}#5432#g" \
-    -e "s#{{CASDOOR_DB_BOOTSTRAP}}#postgres#g" \
-    -e "s#{{CASDOOR_DB_NAME}}#casdoor#g" \
-    "$SCRIPT_DIR/templates/app.conf.tpl" > "$CONF_DIR/data/${INSTANCE_NAME}_config/app.conf"
+bash cli.sh init
 ```
 
 #### start
 
-先重渲 `app.conf`（让 `settings_casdoor.conf` 的改动生效）；附带模式下先起 paradedb 并等其健康，再起 casdoor。
+验证数据库字段、生成 app.conf 和 YAML，再执行本项目 `docker compose up -d`。
 
 ```bash
-# 附带模式：建网络 -> 起库 -> 把库接入网络 -> 等健康
-docker network inspect "${INSTANCE_NAME}_net" >/dev/null 2>&1 || docker network create "${INSTANCE_NAME}_net"
-bash ../../deploy_services/paradedb/cli.sh start --conf "$CONF_DIR/settings_paradedb.conf"
-docker network connect "${INSTANCE_NAME}_net" "${INSTANCE_NAME}_paradedb"
-
-# 起 casdoor（附带模式带 --network；外部模式无此参数；已存在则仅 docker start）
-docker run -d \
-    --name "${INSTANCE_NAME}" \
-    --network "${INSTANCE_NAME}_net" \
-    -p "${CASDOOR_PORT}:8000" \
-    -e RUNNING_IN_DOCKER=true \
-    -v "$CONF_DIR/data/${INSTANCE_NAME}_config/app.conf:/conf/app.conf" \
-    -v "$CONF_DIR/data/${INSTANCE_NAME}_data:/data" \
-    --restart unless-stopped \
-    casbin/casdoor:latest
+bash cli.sh start
 ```
 
 #### up
 
-先 `init` 再 `start`。
+依次执行 `init` 和 `start`；新配置未填数据库字段时启动会明确报错。
+
+```bash
+bash cli.sh up
+```
+
+#### update
+
+刷新应用配置，执行本项目 `docker compose pull` 和 `docker compose up -d`，保留配置及数据。
+
+```bash
+bash cli.sh update
+```
 
 #### stop
 
-停止 casdoor；附带模式下再停 paradedb。
+执行本项目 `docker compose stop`，只停止 Casdoor。
 
 ```bash
-docker stop "${INSTANCE_NAME}"
-bash ../../deploy_services/paradedb/cli.sh stop --conf "$CONF_DIR/settings_paradedb.conf"   # 附带模式
+bash cli.sh stop
 ```
 
 #### rm
 
-删除容器，保留数据与配置；附带模式下连带删除 paradedb 容器与 app 网络。
+执行本项目 `docker compose down`，保留配置和 bind mount 数据，不删除共享网络。
 
 ```bash
-docker stop "${INSTANCE_NAME}"; docker rm "${INSTANCE_NAME}"
-bash ../../deploy_services/paradedb/cli.sh rm --conf "$CONF_DIR/settings_paradedb.conf"      # 附带模式
-docker network rm "${INSTANCE_NAME}_net"                                             # 附带模式
+bash cli.sh rm
 ```
 
 #### purge
 
-删除容器并删除本地数据目录，保留配置；附带模式下连带 `purge` paradedb（删 PG 容器与其数据，保留 `settings_paradedb.conf`）并删除 app 网络。
+执行 `rm` 后，只通过一次性 root 容器删除 `data/<INSTANCE_NAME>_data`；保留 app.conf、settings 和全部数据库资产。
 
 ```bash
-docker stop "${INSTANCE_NAME}"; docker rm "${INSTANCE_NAME}"
-rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data" "$CONF_DIR/data/${INSTANCE_NAME}_config"
-bash ../../deploy_services/paradedb/cli.sh purge --conf "$CONF_DIR/settings_paradedb.conf"   # 附带模式
-docker network rm "${INSTANCE_NAME}_net"                                             # 附带模式
+bash cli.sh purge
 ```
 
-#### 无参 / 未知参数
+#### reset
 
-打印 Usage 帮助。
+执行 `purge` 后，只删除当前 `--conf` 文件、对应 YAML 和 `data/<INSTANCE_NAME>_config/app.conf`，不扫描删除其他配置。
 
-## 6. 其他补充
+```bash
+bash cli.sh reset
+```
 
-- 镜像版本：当前固定 `casbin/casdoor:latest`，需可复现可锁定具体标签。
-- 外部反代：可在 Docker 外层嵌套 Nginx 实现域名与 HTTPS。
-- 依赖 repo 结构：附带模式通过相对路径 `../../deploy_services/paradedb` 定位 paradedb 脚本（脚本为共享代码）；casdoor 目录里的配置与数据是可随目录迁移的资产，整体搬迁请连同 repo 一起。
+#### network ls
+
+只读展示所配置网络及连接容器，不创建、连接或删除网络。
+
+```bash
+bash cli.sh network ls
+```
+
+`--conf PATH` 指定配置及数据落点，父目录需预先存在；`--name NAME` 只在首次生成 settings 时生效。CLI 和模板仍从脚本目录读取。
+
+## 6. 升级、备份与复制恢复
+
+`update` 按 settings 中的 `IMAGE` 拉取并应用镜像；默认 `latest` 是滚动标签，可用具体版本或 digest 固定部署。升级前备份应用配置和业务数据库，数据库初始化及结构变更由 Casdoor 镜像执行，CLI 不执行建库 SQL。
+
+停止服务或完成一致性备份后，复制包含 CLI、hooks、templates、settings、生成 YAML、`data/<INSTANCE_NAME>_config/app.conf` 和本地数据的应用目录。数据库从其服务目录独立备份和恢复，不能仅复制应用目录恢复账号与组织数据。
+
+目标机器准备共享网络，保持实例名与数据目录名对应，填写可达的数据库地址及专用凭证后运行 `start`。该命令会从 settings 和模板重建 app.conf，长期配置调整须保存在 settings 或模板内。使用外置 `--conf` 时同时携带对应脚本和模板。

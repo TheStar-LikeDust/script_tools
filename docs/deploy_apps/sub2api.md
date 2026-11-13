@@ -4,175 +4,152 @@
 
 > Sub2API 是一个 AI 模型订阅转 API 的网关，将上游订阅账号统一聚合为标准 API，提供账号管理、密钥分发与请求转发能力。
 
-它依赖 PostgreSQL 持久化业务数据、依赖 Redis 做缓存。部署采用全捆绑模式：`init` 通过级联机制委托 `deploy_services/paradedb` 与 `deploy_services/redis` 在本目录内生成各自配置与数据落点，`start` 时动态组建专属网络将三个容器按容器名直连。容器以 `AUTO_SETUP=true` 自动完成数据库迁移，并在首次启动按 `ADMIN_EMAIL`/`ADMIN_PASSWORD` 自动创建管理员账号。
+应用由 Docker Compose 单独管理。PostgreSQL 与 Redis 必须先独立部署；管理员为每个应用预先建立独立数据库和账号，在应用 settings 中填写地址、连接凭证和应用自身设置。
 
 ## 2. 核心配置项
 
 ### settings_sub2api.conf
 
-- `INSTANCE_NAME`: 实例名（时间戳后缀，如 `sub2api_8421`），决定容器名与数据目录。
-- `SUB2API_PORT`: 对外暴露的 Web UI / API 端口（容器内 `8080`）。
-- `TZ`: 容器时区，默认 `Asia/Shanghai`，影响数据库时间戳、统计当日边界、订阅到期与日志时间。
-- `SERVER_MODE`: 运行模式，默认 `release`。
-- `RUN_MODE`: 运行档位，默认 `standard`。
-- `ADMIN_EMAIL`: 管理员邮箱，本地名 `init` 时随机生成（4 位小写字母）、拼接固定后缀，形如 `kxqp@sub2api.local`。
-- `ADMIN_PASSWORD`: 管理员密码，`init` 时随机生成。
-- `JWT_SECRET`: 登录会话签名密钥，`init` 时随机生成（`openssl rand -hex 32`）。首次启动后严禁更换，否则已签发会话全部失效。
-- `JWT_EXPIRE_HOUR`: 会话有效期小时数，默认 `24`。
-- `TOTP_ENCRYPTION_KEY`: 两步验证 (2FA) 密钥的加密密钥，`init` 时随机生成。首次启动后严禁更换，否则已配置的 TOTP 无法解密。
-- `DATABASE_MAX_OPEN_CONNS` / `DATABASE_MAX_IDLE_CONNS` / `DATABASE_CONN_MAX_LIFETIME_MINUTES` / `DATABASE_CONN_MAX_IDLE_TIME_MINUTES`: 数据库连接池参数。
-- `REDIS_PASSWORD`: 默认空（捆绑 redis 在隔离网络内无密码）。
-- `REDIS_DB` / `REDIS_POOL_SIZE` / `REDIS_MIN_IDLE_CONNS` / `REDIS_ENABLE_TLS`: Redis 连接参数。
-- `GEMINI_OAUTH_CLIENT_ID` / `GEMINI_OAUTH_CLIENT_SECRET` / `GEMINI_OAUTH_SCOPES` / `GEMINI_QUOTA_POLICY` / `GEMINI_CLI_OAUTH_CLIENT_SECRET` / `ANTIGRAVITY_OAUTH_CLIENT_SECRET` / `ANTIGRAVITY_USER_AGENT_VERSION`: Gemini 账号的 OAuth 配置，默认空。
-- `SECURITY_URL_ALLOWLIST_ENABLED` / `SECURITY_URL_ALLOWLIST_ALLOW_INSECURE_HTTP` / `SECURITY_URL_ALLOWLIST_ALLOW_PRIVATE_HOSTS` / `SECURITY_URL_ALLOWLIST_UPSTREAM_HOSTS`: URL 白名单安全策略。
-- `UPDATE_PROXY_URL`: 访问 GitHub（在线更新与价格数据）的代理，默认空。
-- `GATEWAY_*`: 图片流式输出与并发控制等网关参数，沿用镜像默认值。
-
-### settings_paradedb.conf
-
-- 包含附带的 paradedb 实例的连接凭证（业务数据落在其默认 `postgres` 库）。
-
-### settings_redis.conf
-
-- 包含附带的 redis 实例的实例名与端口。
+- `INSTANCE_NAME`：应用容器与 Compose 项目名。
+- `IMAGE`：Sub2API 镜像，默认为 `weishaw/sub2api:latest`。
+- `SUB2API_PORT`：宿主机 Web/API 端口，容器端口为 `8080`。
+- `DOCKER_NETWORK`：可选的预先创建的 Docker 网络。同机连接其他 Compose 部署的服务时，应用与基础服务需接入同一网络。
+- `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` / `DB_SSLMODE`：管理员预先创建的 Sub2API 专用数据库及账号。端口默认 `5432`，SSL 模式默认 `disable`。
+- `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DB`：独立 Redis 服务的地址、端口、可选密码和逻辑库编号。端口默认 `6379`。
+- `DATABASE_MAX_OPEN_CONNS` / `DATABASE_MAX_IDLE_CONNS` / `DATABASE_CONN_MAX_LIFETIME_MINUTES` / `DATABASE_CONN_MAX_IDLE_TIME_MINUTES`：数据库连接池参数。
+- `REDIS_POOL_SIZE` / `REDIS_MIN_IDLE_CONNS` / `REDIS_ENABLE_TLS`：Redis 连接参数。
+- `SERVER_MODE` / `RUN_MODE`：服务运行模式，默认 `release` / `standard`。
+- `ADMIN_EMAIL` / `ADMIN_PASSWORD`：首次启动时用于初始化管理员账号的凭证。
+- `JWT_SECRET`：会话签名密钥；首次启动后不要更改，否则已有会话失效。
+- `JWT_EXPIRE_HOUR`：会话有效期小时数，默认 `24`。
+- `TOTP_ENCRYPTION_KEY`：TOTP 密钥加密密钥；首次启动后不要更改，否则已存的 TOTP 配置无法解密。
+- `TZ`：容器时区，默认 `Asia/Shanghai`。
+- `GEMINI_*`、`ANTIGRAVITY_*`：可选的 Gemini/Antigravity OAuth 配置。
+- `SECURITY_URL_ALLOWLIST_*`：URL 白名单安全策略。
+- `UPDATE_PROXY_URL`：访问 GitHub 在线更新与价格数据的代理。
+- `GATEWAY_*`：OpenAI 响应超时、HTTP/2 回退、图片流式输出及并发控制参数。
 
 ## 3. 备注
 
-- 连接信息注入机制：`DATABASE_HOST/USER/PASSWORD/DBNAME` 与 `REDIS_HOST` 不落盘在 `settings_sub2api.conf`，而是每次 `start` 时从两份附带配置实时读取（host 为依赖容器名、端口为容器内部端口），经 `-e` 注入容器。修改数据库凭证只需改 `settings_paradedb.conf` 后 `rm` 再 `start`。
-- 附带 redis 仅在专属隔离网络内被访问，未设密码；对外暴露的仅是 redis 自身 `settings_redis.conf` 中的随机宿主机端口，如需对外屏蔽可手动移除该端口映射。
-- 数据库复用项目的 `deploy_services/paradedb`（PostgreSQL 兼容），默认库与用户均为 `postgres`，`DATABASE_SSLMODE` 固定 `disable`。
-- 容器以 `--ulimit nofile=100000:100000` 提升文件句柄上限，适配网关的高并发连接。
-- 首次启动按 `ADMIN_EMAIL`/`ADMIN_PASSWORD` 自动创建管理员账号，`start` 结束会回显该凭证。
+- 容器以 `AUTO_SETUP=true` 自动执行数据库迁移；首次启动按 `ADMIN_EMAIL` / `ADMIN_PASSWORD` 创建管理员账号。
+- 多个应用共用 PostgreSQL 实例时，必须各自使用独立数据库和账号。请管理员预先建库、建号并授予最小所需权限。
+- 同机容器使用共享 Docker 网络上的数据库/Redis 容器名及容器端口。应用容器内的 `localhost` 指向 Sub2API 自身；远程连接填写容器可达的 DNS 名称或 IP 与端口。
+- `DOCKER_NETWORK` 为空时，应用使用自己的 Compose 网络。要访问同机基础服务，应先由管理员创建共享网络，例如 `docker network create shared_services`，然后在 PostgreSQL、Redis 和 Sub2API 的 settings 中写入 `DOCKER_NETWORK="shared_services"`。
+- 当前 Redis 基础服务默认未启用认证。只有 Redis 实例已配置对应密码与访问隔离时，才在 `REDIS_PASSWORD` 填入密码；不要把无认证 Redis 暴露到不可信网络。
+- `rm` 仅移除 Sub2API 容器和应用私有网络；`purge` 仅额外删除本应用目录下的 bind mount 数据；`reset` 仅额外删除当前应用 settings 和生成的 Compose YAML。以上命令都不会触及 PostgreSQL、Redis、它们的配置或数据。
+- 本地 `./data/<INSTANCE_NAME>_data` 挂载到 `/app/data`；主要业务数据由外部 PostgreSQL 管理，复制应用目录不包含数据库或 Redis 数据。
+- settings 是 Bash 配置。包含特殊字符的密码和密钥使用单引号并按 Bash 单引号规则转义；生成的 Compose YAML 只包含变量引用，不落入密码值。
+- 同名容器属于其他 Compose 项目或服务时，CLI 拒绝操作；不同部署使用唯一实例名。`--conf` 父目录须已存在，生成 YAML 和本地数据位于该目录，CLI 和模板仍从脚本目录读取。
 
 ## 4. 快速执行
 
 ```bash
 cd deploy_apps/sub2api
-
-# 常规分步拉起（推荐）：先生成配置、按需修改 settings_sub2api.conf 后再启动
 bash cli.sh init
+# Fill DB_* and REDIS_*; set DOCKER_NETWORK for same-host services.
 bash cli.sh start
+```
 
-# 一键拉起（跳过配置直接启动，会同时起 paradedb、redis 与 sub2api）
-bash cli.sh up
+同机连接示例，`postgres_shared` 与 `redis_sub2api` 分别替换为独立服务的 `INSTANCE_NAME`：
 
-# 停止运行
+```bash
+DOCKER_NETWORK="shared_services"
+DB_HOST="postgres_shared"
+DB_PORT="5432"
+DB_NAME="sub2api"
+DB_USER="sub2api"
+DB_PASSWORD='填写该应用数据库账号的密码'
+REDIS_HOST="redis_sub2api"
+REDIS_PORT="6379"
+REDIS_PASSWORD='填写对应 Redis 密码；无认证实例留空'
+REDIS_DB="0"
+```
+
+远程连接时可保留 `DOCKER_NETWORK=""`，例如 `DB_HOST="db.example.com"`、`DB_PORT="5432"`、`DB_SSLMODE="require"`、`REDIS_HOST="cache.example.com"`、`REDIS_PORT="6380"`、`REDIS_ENABLE_TLS="true"`；端口、SSL/TLS 与密码需匹配实际远端服务。Redis DB 编号只区分键空间，不提供权限隔离；当前无认证 Redis 模板应按应用独立部署。
+
+更新应用镜像：
+
+```bash
+bash cli.sh update
+```
+
+`up` 等价于 `init` 后执行 `start`，适用于连接配置已就绪的实例。停止、移除或清理只作用于应用自身：
+
+```bash
 bash cli.sh stop
-
-# 销毁容器（保留配置与 data/ 数据目录）
 bash cli.sh rm
-
-# 危险操作：彻底销毁容器，并删除挂载的 data/ 数据目录
+# DANGER: permanently delete this application's local data.
 bash cli.sh purge
+# DANGER: also delete this app's settings and YAML.
+bash cli.sh reset
 ```
 
 ## 5. 命令解释
 
+下列 Compose 片段表示 CLI 内部调用，变量来自 CLI 读取的 settings。日常操作使用 `bash cli.sh <命令>`；settings 不是 Compose 的 env-file。
+
 #### init
 
-生成 `settings_sub2api.conf`（仅首次）；委托 paradedb 与 redis 生成 `settings_paradedb.conf` / `settings_redis.conf` 及各自数据目录，并预建 sub2api 数据目录。不启动容器。
-
-```bash
-# 1) sub2api 自身配置（仅首次）
-sed -e "s/{{INSTANCE_NAME}}/sub2api_<时间戳>/g" \
-    -e "s/{{SUB2API_PORT}}/<随机端口>/g" \
-    -e "s/{{ADMIN_USER}}/<随机4位字母>/g" \
-    -e "s/{{ADMIN_PASSWORD}}/<随机密码>/g" \
-    -e "s/{{JWT_SECRET}}/<随机密钥>/g" \
-    -e "s/{{TOTP_ENCRYPTION_KEY}}/<随机密钥>/g" \
-    "$SCRIPT_DIR/templates/settings_sub2api.conf.tpl" > settings_sub2api.conf
-
-# 2) 委托 paradedb 与 redis——配置与数据都落在 sub2api 目录
-bash ../../deploy_services/paradedb/cli.sh init \
-    --conf "$CONF_DIR/settings_paradedb.conf" \
-    --name "sub2api_<时间戳>_paradedb"
-bash ../../deploy_services/redis/cli.sh init \
-    --conf "$CONF_DIR/settings_redis.conf" \
-    --name "sub2api_<时间戳>_redis"
-```
+生成缺失的 settings，刷新 Compose YAML 并预建应用数据目录，不启动容器。已有 settings 不会被覆盖或自动补字段；缺少的连接项按模板人工填写。
 
 #### start
 
-先起 paradedb 与 redis 并接入专属网络，等数据库健康后读取连接信息，再起 sub2api。
+检查数据库、Redis 地址、管理员字段和 JWT/TOTP 密钥，刷新 Compose YAML 并启动或重建 Sub2API 容器。容器启动后的就绪情况查看日志或健康状态。
 
 ```bash
-# 建网络 -> 起依赖 -> 接入网络 -> 等 DB 健康
-docker network inspect "${INSTANCE_NAME}_net" >/dev/null 2>&1 || docker network create "${INSTANCE_NAME}_net"
-bash ../../deploy_services/paradedb/cli.sh start --conf "$CONF_DIR/settings_paradedb.conf"
-bash ../../deploy_services/redis/cli.sh start --conf "$CONF_DIR/settings_redis.conf"
-docker network connect "${INSTANCE_NAME}_net" "${INSTANCE_NAME}_paradedb"
-docker network connect "${INSTANCE_NAME}_net" "${INSTANCE_NAME}_redis"
-
-# 起 sub2api（已存在则仅 docker start）
-docker run -d \
-    --name "${INSTANCE_NAME}" \
-    --network "${INSTANCE_NAME}_net" \
-    --ulimit nofile=100000:100000 \
-    -p "${SUB2API_PORT}:8080" \
-    -v "$CONF_DIR/data/${INSTANCE_NAME}_data:/app/data" \
-    -e AUTO_SETUP="true" \
-    -e SERVER_HOST="0.0.0.0" -e SERVER_PORT="8080" \
-    -e DATABASE_HOST="${INSTANCE_NAME}_paradedb" -e DATABASE_PORT="5432" \
-    -e DATABASE_USER="postgres" -e DATABASE_PASSWORD="<随机密码>" \
-    -e DATABASE_DBNAME="postgres" -e DATABASE_SSLMODE="disable" \
-    -e REDIS_HOST="${INSTANCE_NAME}_redis" -e REDIS_PORT="6379" \
-    -e ADMIN_EMAIL="<随机4位字母>@sub2api.local" -e ADMIN_PASSWORD="<随机密码>" \
-    -e JWT_SECRET="<随机密钥>" -e TOTP_ENCRYPTION_KEY="<随机密钥>" \
-    -e TZ="Asia/Shanghai" \
-    # ... 其余 settings_sub2api.conf 中的可选参数经 -e 透传 ...
-    --health-cmd "wget -q -T 5 -O /dev/null http://localhost:8080/health || exit 1" \
-    --restart unless-stopped \
-    weishaw/sub2api:latest
+docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
+    --project-name "$INSTANCE_NAME" -f "$COMPOSE_FILE" up -d
 ```
 
 #### up
 
-先 `init` 再 `start`。
+依次运行 `init` 和 `start`。外部 PostgreSQL 与 Redis 必须已运行且配置可连接。
+
+#### update
+
+拉取 settings 指定的应用镜像，再按当前配置重建应用；保留 settings、随机密钥和本地数据。
+
+```bash
+docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
+    --project-name "$INSTANCE_NAME" -f "$COMPOSE_FILE" pull
+docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
+    --project-name "$INSTANCE_NAME" -f "$COMPOSE_FILE" up -d
+```
 
 #### stop
 
-停止 sub2api，再停 paradedb 与 redis。
+停止本 Compose 项目中的 Sub2API 应用容器，不停止共享基础服务。
 
 ```bash
-docker stop "${INSTANCE_NAME}"
-bash ../../deploy_services/paradedb/cli.sh stop --conf "$CONF_DIR/settings_paradedb.conf"
-bash ../../deploy_services/redis/cli.sh stop --conf "$CONF_DIR/settings_redis.conf"
+docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
+    --project-name "$INSTANCE_NAME" -f "$COMPOSE_FILE" stop
 ```
 
 #### rm
 
-删除三个容器与 app 网络，保留数据与配置。
+移除应用容器和项目私有网络，保留 settings 与应用数据；external 共享网络由其管理员管理。
 
 ```bash
-docker stop "${INSTANCE_NAME}"; docker rm "${INSTANCE_NAME}"
-bash ../../deploy_services/paradedb/cli.sh rm --conf "$CONF_DIR/settings_paradedb.conf"
-bash ../../deploy_services/redis/cli.sh rm --conf "$CONF_DIR/settings_redis.conf"
-docker network rm "${INSTANCE_NAME}_net"
+docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
+    --project-name "$INSTANCE_NAME" -f "$COMPOSE_FILE" down
 ```
 
 #### purge
 
-删除容器并删除本地数据目录，保留配置；连带 `purge` paradedb 与 redis（各自删数据保留配置）并删除 app 网络。
+危险操作：先执行 `rm`，再删除仅属于 Sub2API 的 `data/<INSTANCE_NAME>_data` 目录。共享 PostgreSQL/Redis 及其数据不受影响。
 
-```bash
-docker stop "${INSTANCE_NAME}"; docker rm "${INSTANCE_NAME}"
-rm -rf "$CONF_DIR/data/${INSTANCE_NAME}_data"
-bash ../../deploy_services/paradedb/cli.sh purge --conf "$CONF_DIR/settings_paradedb.conf"
-bash ../../deploy_services/redis/cli.sh purge --conf "$CONF_DIR/settings_redis.conf"
-docker network rm "${INSTANCE_NAME}_net"
-```
+#### reset
+
+危险操作：执行 `purge`，再删除当前 settings 文件和生成的 Compose YAML。不会用通配符删除同目录中的其他配置。
 
 #### network ls
 
-经 `shared_scripts/network.sh` 展示该实例的专属网络及已连接的容器。
+只读检查配置的共享网络，或未配置共享网络时的项目默认网络；不创建、连接或删除网络。
 
-#### 无参 / 未知参数
+## 6. 升级、备份与复制恢复
 
-打印 Usage 帮助。
+应用镜像默认使用滚动标签 `weishaw/sub2api:latest`；可在 `IMAGE` 中指定具体版本或 digest。`update` 会拉取并应用该镜像，应用可能执行数据库结构迁移，升级前备份数据库和配置。
 
-## 6. 其他补充
+停止应用或完成一致性备份后，复制包含 CLI、templates、settings、生成 YAML 和 `data/<INSTANCE_NAME>_data` 的应用目录。保留 `JWT_SECRET`、`TOTP_ENCRYPTION_KEY`、管理员及 OAuth 配置；JWT 和 TOTP 密钥须与数据库备份对应，不能用 `reset` 生成替代值。
 
-- 镜像版本：当前固定 `weishaw/sub2api:latest`，需可复现可锁定具体标签。
-- 数据库选型：官方 compose 使用 `postgres:18-alpine`，本项目复用 `deploy_services/paradedb`（PostgreSQL 兼容）以统一依赖；如需严格对齐官方镜像，可另行替换底层依赖。
-- 环境变量：`settings_sub2api.conf` 收录了较完整的可选项（Gemini OAuth、URL 白名单、网关并发等），默认值与官方 compose 一致，无需即可保持默认。
-- 依赖 repo 结构：通过相对路径 `../../deploy_services/paradedb`、`../../deploy_services/redis` 与 `../../shared_scripts/network.sh` 定位共享脚本；sub2api 目录里的配置与数据是可随目录迁移的资产，整体搬迁请连同 repo 一起。
+PostgreSQL 与 Redis 在各自服务目录独立备份和恢复，应用目录不包含这些数据。目标机器准备共享网络，填写数据库与 Redis 的实际地址和凭证，保持实例名与本地数据目录名对应后运行 `start`。使用外置 `--conf` 时同时携带对应 CLI 和模板。

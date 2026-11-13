@@ -5,24 +5,23 @@
 ## 1. 设计思路
 
 脚本工具的设计基于以下核心理念：
-- 目录即服务 (Service as a Directory)：服务的运维脚本、配置、数据目录均内聚在同一文件夹下，拷贝目录即带走该服务全部资产。
-- 纯 docker run 派发：不再依赖 docker compose，所有服务的生命周期均通过原生 docker run 管理。
-- 职责分层 (Separation by File)：cli.sh 只保留最基础的生命周期骨架与本服务的 docker run；服务专属的特殊操作（级联依赖、附属配置渲染、组网）下沉到同目录可选的 hooks.sh；跨服务复用的选配能力（如容器网络）抽到项目级共享库 shared_scripts/。三者解耦，使简单服务保持极简，复杂服务的复杂度被隔离在 hooks.sh 中。
-- 委托式级联 (Delegated Cascade)：复合服务将底层基础服务的 cli.sh 视作函数进行调用，通过参数隔离不同上层的实例数据。
-- 配置与数据分离：脚本本身无状态，运行期的全部配置落盘到 settings_<服务名>.conf，所有数据固化在 data 目录，确保销毁容器不丢数据。
+
+- 目录即服务 (Service as a Directory)：服务的运维脚本、配置、数据目录均内聚在同一文件夹下，停止服务或完成一致性备份后拷贝目录即带走本服务资产；外部依赖单独备份。
+- Compose 生命周期：Compose 声明容器、网络、端口、环境变量和相对路径 bind mount；cli.sh 生成配置并调用 Compose。
+- 职责分层 (Separation by File)：cli.sh 负责配置初始化、随机密钥生成和服务专属操作；Compose 管理容器生命周期。hooks.sh 仅承载确有需要的应用专属初始化，不级联启停或清理共享基础服务。
+- 外部依赖：应用使用配置文件中的服务地址和凭证连接独立部署的基础服务，不拥有这些依赖的生命周期。
+- 配置与数据分离：脚本本身无状态，运行期的全部配置落盘到 settings_<服务名>.conf，本地数据持久化到 data 目录，外部数据库、缓存和对象存储数据由其独立服务目录管理。
 
 ## 2. 文件分层与职责
 
-每个服务的运维逻辑按职责拆成三层：
+Compose 服务的部署定义按职责拆分：
 
-- cli.sh（必选，统一骨架）：服务的唯一操作入口与控制接口。承担参数解析、路径锚定、本服务 settings_<服务名>.conf 的渲染（generate_settings）、五个标准生命周期命令（init/start/stop/rm/purge）与 up 组合糖，以及本服务自身的 docker run。docker run 留在 cli.sh，允许各服务存在细微差异（镜像名、端口、挂载、`-e` 列表不同）。cli.sh 在各生命周期点被动回调 hooks.sh 中定义的同名钩子。
-- hooks.sh（可选，服务特殊操作）：仅当服务有专属的特殊操作时才存在（典型为复合服务）。集中存放级联依赖的拉起与转发、附属配置（如 Casdoor 的 app.conf）的渲染、专属组网与依赖健康等待等，通过 on_init / on_start / on_stop / on_rm / on_purge / on_network 等钩子暴露，由 cli.sh 被动调用；未定义的钩子自动跳过。无特殊操作的基础服务（如 paradedb）不需要此文件。
-- shared_scripts/*.sh（选配，项目级共享库）：跨服务复用的通用能力，目前为 shared_scripts/network.sh（容器网络的创建、连接、删除、查看）。由用到该能力的 hooks.sh 通过相对路径 source。其路径与项目仓库路径绑定，作为约定不注入到各服务目录内；仅依赖单目录自包含的简单服务本就不引用共享库。
+- cli.sh（必选）：解析 `--conf` / `--name`，生成 settings 和 Compose YAML，准备数据目录，并将 `init`、`start`、`update`、`stop`、`rm`、`purge`、`reset` 映射到本服务的 Compose 项目。
+- `templates/compose.yaml.tpl`（Compose 服务必选）：声明本服务容器、环境变量和数据挂载；CLI 根据配置追加可选端口或 external 网络声明。模板可被人工复制复用，不引入动态编排框架。
+- `templates/settings_<服务名>.conf.tpl`（需要配置初始化时）：提供 Bash 配置模板。生成的 `settings_<服务名>.conf` 保存本实例的设置与凭证。
+- hooks.sh（可选）：仅承载有实际用途的应用专属操作，当前用于 Casdoor 的 app.conf 渲染。不使用空钩子或通用生命周期钩子分发。
 
-钩子契约：
-- cli.sh 顶部 `[ -f "$SCRIPT_DIR/hooks.sh" ] && source "$SCRIPT_DIR/hooks.sh"`，并定义 `hook() { if declare -F "$1" >/dev/null; then "$1"; fi; }`。
-- hooks.sh 被 source 进 cli.sh 的同一 shell，与其共享变量（SCRIPT_DIR / CONF_DIR / INSTANCE_NAME / 已 source 的配置项）与工具函数。
-- cli.sh 顶部声明 `HOOK_RUN_ARGS=()`；hooks.sh 的 on_start 可向其追加参数（如 `--network <net>`），cli.sh 的 docker run 以 `"${HOOK_RUN_ARGS[@]}"` 注入。这是 docker run 留在 cli.sh、又能被 hooks 影响的桥梁。
+settings 文件是 Bash 配置，不是 Compose `env_file`。cli.sh source 后导出变量供 Compose 插值；生成 YAML 不写入密码或密钥。
 
 ## 3. 脚本结构
 
@@ -38,65 +37,92 @@ set -euo pipefail
 COMMAND=${1:-help}
 shift || true
 
-# 级联参数解析 (--conf, --name)，其余参数（如 --external）收集到 EXTRA_ARGS
+# Parse instance options.
 CONF_FILE=""
 NAME_OVERRIDE=""
-EXTRA_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --conf) CONF_FILE="$2"; shift 2 ;;
         --name) NAME_OVERRIDE="$2"; shift 2 ;;
-        *) EXTRA_ARGS+=("$1"); shift ;;
+        *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
 done
 
-# 路径锚定与数据落点（CONF_DIR 为配置文件所在目录）
+# Locate source templates and instance files separately.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TPL_DIR="$SCRIPT_DIR/templates"
 CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_<服务名>.conf}"
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
+CONF_FILE="$CONF_DIR/$(basename "$CONF_FILE")"
 IMAGE="..."
-HOOK_RUN_ARGS=()   # hooks.sh 的 on_start 可填充，注入到 docker run
-
-# 可选的服务特殊操作（级联依赖、附属配置、组网）；简单服务无此文件
-[ -f "$SCRIPT_DIR/hooks.sh" ] && source "$SCRIPT_DIR/hooks.sh"
-hook() { if declare -F "$1" >/dev/null; then "$1"; fi; }
+COMPOSE_FILE="${CONF_FILE%.conf}.compose.yaml"
 
 # -----------------------------------------------------------------------------
 # 2. Utility Functions
 # -----------------------------------------------------------------------------
-# 无副作用、可复用的逻辑
+# Load settings, validate required fields and check container ownership.
 hr() { echo "-----------------------------------------------------------------------------"; }
 random_port() { ... }
-require_conf() { ... }
+load_settings() { ... }
+require_connections() { ... }
+require_managed_container() { ... }
+compose() {
+    docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
+        --project-name "$INSTANCE_NAME" -f "$COMPOSE_FILE" "$@"
+}
 
 # -----------------------------------------------------------------------------
 # 3. Service Config Rendering
 # -----------------------------------------------------------------------------
-# 本服务 settings_<服务名>.conf 的渲染（填充的字段因服务而异）
+# Generate this service's settings and Compose definition.
 generate_settings() { ... }
+generate_compose() { ... }
 
 # -----------------------------------------------------------------------------
 # 4. Lifecycle Functions (do_xxx)
 # -----------------------------------------------------------------------------
-# 统一使用 do_ 前缀；在生命周期点被动调用 hooks.sh 的同名钩子
+# Each lifecycle command owns only this Compose project.
 do_init() {
-    [ ! -f "$CONF_FILE" ] && generate_settings
-    source "$CONF_FILE"
-    hook on_init          # 级联依赖 init、附属配置渲染等
-    # 渲染配置，但不启动
+    if [ ! -f "$CONF_FILE" ]; then generate_settings; fi
+    load_settings
+    generate_compose
+    mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data"
 }
 
 do_start() {
-    require_conf
-    set -a; source "$CONF_FILE"; set +a
-    hook on_start         # 拉起级联依赖、组网，并填充 HOOK_RUN_ARGS
-    # docker run ... "${HOOK_RUN_ARGS[@]}" ... （已存在则 docker start）
+    load_settings
+    require_connections
+    require_managed_container
+    generate_compose
+    mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data"
+    compose up -d
 }
 
-do_stop()  { ...; hook on_stop; }
-do_rm()    { ...; hook on_rm; }
-do_purge() { ...; hook on_purge; }
-do_reset() { do_purge; rm -f "$CONF_DIR"/settings*.conf; }   # purge + 删除本服务所有 settings
+do_update() {
+    load_settings
+    require_connections
+    require_managed_container
+    generate_compose
+    mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data"
+    compose pull
+    compose up -d
+}
+
+do_stop() {
+    load_settings
+    require_managed_container
+    [ -f "$COMPOSE_FILE" ] || generate_compose
+    compose stop
+}
+
+do_rm() {
+    load_settings
+    require_managed_container
+    [ -f "$COMPOSE_FILE" ] || generate_compose
+    compose down
+}
+do_purge() { do_rm; remove_this_service_data; }
+do_reset() { do_purge; rm -f -- "$CONF_FILE" "$COMPOSE_FILE"; }
 do_help()  { ... }
 
 # -----------------------------------------------------------------------------
@@ -105,36 +131,43 @@ do_help()  { ... }
 case "$COMMAND" in
     init)    do_init ;;
     start)   do_start ;;
-    up)      do_init && do_start ;;
+    up)      do_init; do_start ;;
+    update)  do_update ;;
     stop)    do_stop ;;
     rm)      do_rm ;;
     purge)   do_purge ;;
     reset)   do_reset ;;
-    network) if declare -F on_network >/dev/null; then require_conf; source "$CONF_FILE"; on_network "${EXTRA_ARGS[@]}"; else do_help; fi ;;
     *)       do_help ;;
 esac
 ```
 
+以上是带外部依赖和本地数据的应用骨架，省略号按服务实现。`load_settings` 检查配置存在，以 `set -a`、`source <(sed 's/\r$//' "$CONF_FILE")`、`set +a` 读取并导出变量，再设置派生变量及校验实例名。Casdoor 在 `start/update` 渲染 app.conf；RustFS 准备数据属主；LobeHub 不创建本地数据目录。
+
 ## 4. 常见命令
 
-日常生命周期高频使用的标准命令，各服务只要提供该功能，就必须符合下列语义。约定 start 是幂等的（已存在则 docker start，否则 docker run）。修改配置后需执行 rm 再 start。
+日常生命周期命令按以下语义实现。Compose 管理的容器定义有变化时，重复运行 `start` 或 `up` 会应用新配置，无需先 `rm`。
 
-- init：仅生成配置（渲染 settings_<服务名>.conf；集合服务经 on_init 还会初始化各附带依赖、渲染附属配置），不启动容器。结束时回显下一步操作指引。
-- start：读取已有配置启动容器（集合服务经 on_start 按依赖顺序逐个拉起并组网）。成功后高亮回显访问地址、端口及关键默认账号密码。
-- up：一键组合，等价于 init 加上 start，用于纯默认值快速体验。
-- stop：仅停止容器进程，不删除容器与数据（集合服务经 on_stop 一并停止附带依赖）。
-- rm：删除容器（集合服务经 on_rm 一并删除附带依赖与网络等隔离资源），但必须保留 data 与 settings_<服务名>.conf。
-- purge：危险操作，在 rm 基础上彻底删除 data 数据目录；但必须保留 settings_<服务名>.conf，避免随机密钥永久丢失。bind-mount 数据常由容器内 root 进程写入，宿主机非 root 用户直接 `rm -rf` 会因属主权限失败；故 docker 服务统一用一次性 root 容器删除（`docker run --rm -v "${CONF_DIR}/data:/purge" alpine rm -rf "/purge/${INSTANCE_NAME}_data"`），且不得用 `2>/dev/null || true` 吞掉错误，以免删除失败却回显成功。宿主机级工具（如 codeserver）数据归当前用户，普通 `rm -rf` 即可，但同样不静默吞错。
-- reset：破坏力最强的命令，破坏阶梯为 rm → purge → reset。先执行 purge（删容器+data，复合服务经 on_purge 级联清依赖 data），再 `rm -f "$CONF_DIR"/settings*.conf` 删除本服务目录下所有生成配置（`settings_<服务名>.conf` 及 `settings_paradedb.conf`/`settings_redis.conf` 等附属配置），把目录还原成 git clone 时的纯源文件态。顺序上 purge 必须在前（purge 依赖 settings_<服务名>.conf 读取 INSTANCE_NAME），删 settings 放最后。与 init 对称：init 生成全部生成物，reset 清空全部生成物。
+- init：生成缺失的 settings、刷新 Compose YAML 并按需创建本服务数据目录，不启动常驻服务。LobeHub 无宿主机 Node.js 时可用一次性应用容器生成 JWKS。
+- start：读取 settings、刷新 YAML 并执行 `docker compose up -d`；返回后查看应用日志或健康状态判断是否就绪。
+- up：一键组合，等价于 `init` 加 `start`。
+- update：执行 `docker compose pull`，再 `docker compose up -d`，保留配置、凭证和数据。
+- stop：执行本 Compose 项目的 `stop`，保留容器、网络与数据。
+- rm：执行本 Compose 项目的 `down`，移除本服务容器和私有网络，保留配置和 bind mount 数据；外部共享网络不会删除。
+- purge：危险操作，在 `rm` 后仅删除本服务拥有的数据目录，并保留 settings。必要时可用一次性 root 容器处理 bind mount 的属主权限；不得吞掉删除失败。
+- reset：先 purge，再删除本服务自己的 settings 和生成 YAML；Casdoor 还删除生成的 app.conf。不得删除其他服务配置或共享依赖。
 
-注：status 不属于标准命令集（已移除）。查看实例运行状态直接用 `docker ps -a --filter name=<INSTANCE_NAME>`。
+`init` 不覆盖已有 settings，也不自动补写字段或依赖凭证，缺少的字段按模板人工补齐。应用 `start/update` 检查必需连接信息，`stop/rm` 不要求依赖在线。同名容器的 Compose 项目或服务标记不匹配时拒绝操作，应使用唯一实例名。
+
+生成 YAML 保留环境变量引用，直接调用 Compose 前必须由 CLI 的配置加载逻辑准备环境；常规操作使用 `cli.sh`。持久修改部署定义时编辑 `templates/compose.yaml.tpl`，生成 YAML 会在 `init/start/update` 时刷新。
+
+查看实例状态使用 `docker ps -a --filter 'name=^/<INSTANCE_NAME>$'`，日志使用 `docker logs -f <INSTANCE_NAME>`，执行前替换实例名占位符。没有 `status` 命令；宿主机工具的命令以各自说明为准。
 
 ## 5. 特殊命令
 
 部分特定场景使用或具有特殊约定的命令与参数：
 
-- network：代理命令，仅当服务在 hooks.sh 中定义了 on_network 时才生效（即含底层依赖级联、需要专属网络的复合服务）。cli.sh 检测到 on_network 后将其暴露，常用 `bash cli.sh network ls` 经 shared_scripts/network.sh 展示该实例的专属网络及已连接的容器；单体独立应用未定义则回落到 help。
-- help：缺省或未知参数时触发，打印各命令的简短说明及用法。
-- 钩子 (on_init / on_start / on_stop / on_rm / on_purge / on_network)：并非用户直接调用的命令，而是 cli.sh 在对应生命周期点被动回调 hooks.sh 中的同名函数，用于挂载服务专属的特殊操作（见第 2 节）。
-- 级联嵌入参数 (--conf, --name)：附加在基础服务的任意生命周期命令后，可指定被嵌入实例的配置位置与实例名。这改变了命令作用的目标实例而不改变命令语义，如 bash deploy_services/paradedb/cli.sh start --conf ../settings_paradedb.conf。
-- Init-only 模式分歧开关 (如 --external)：对于改变拓扑架构的部署选项（例如是否使用外部云数据库），通过给 init 增加专属 flag 解决。cli.sh 只在 init 阶段解析它（收集在 EXTRA_ARGS 中）并将意图写入 settings_<服务名>.conf，后续生命周期一律统一从 settings_<服务名>.conf 读取状态，实现一次设定、永久生效。
+- help：打印各命令的简短说明及用法。
+- `--conf PATH`：将实例 settings、生成的 Compose YAML 和数据目录定位到指定配置文件所在目录，父目录须已存在。CLI 和模板仍位于脚本目录，复制恢复时需一并携带。应用配置包含自身设置、密钥和依赖连接信息，不代表应用拥有这些依赖。
+- `--name NAME`：`init` 时指定完整实例名，用于 Compose 项目名、容器名及数据目录。
+- `DOCKER_NETWORK`：基础服务和应用加入管理员预先创建的共享 Docker 网络时使用。多个 Compose 项目可通过该网络互通；未配置时，各自使用私有网络。
+- `network ls`：应用提供的只读网络查看命令，不代理创建、连接或删除共享网络。

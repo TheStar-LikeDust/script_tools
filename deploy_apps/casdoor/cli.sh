@@ -7,30 +7,29 @@ set -euo pipefail
 COMMAND=${1:-help}
 shift || true
 
-# Cascade args (--conf/--name) plus any command-specific extras (e.g. --external)
 CONF_FILE=""
 NAME_OVERRIDE=""
-EXTRA_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --conf) CONF_FILE="$2"; shift 2 ;;
         --name) NAME_OVERRIDE="$2"; shift 2 ;;
-        *) EXTRA_ARGS+=("$1"); shift ;;
+        ls) [ "$COMMAND" = network ] || { echo "[ERROR] Unknown option: $1" >&2; exit 2; }; shift ;;
+        *) echo "[ERROR] Unknown option: $1" >&2; exit 2 ;;
     esac
 done
 
-# Anchor paths to this script's own location (cwd-independent, move-safe)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TPL_DIR="$SCRIPT_DIR/templates"
 CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_casdoor.conf}"
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
+CONF_FILE="$CONF_DIR/$(basename "$CONF_FILE")"
+COMPOSE_FILE="${CONF_FILE%.conf}.compose.yaml"
 IMAGE="casbin/casdoor:latest"
-HOOK_RUN_ARGS=()   # filled by hooks.sh on_start; injected into docker run
-
-# Optional service-specific operations (bundled deps, app.conf, networking).
-# Absent for simple services; present here because casdoor is composite.
-[ -f "$SCRIPT_DIR/hooks.sh" ] && source "$SCRIPT_DIR/hooks.sh"
-hook() { if declare -F "$1" >/dev/null; then "$1"; fi; }
+DOCKER_NETWORK=""
+DB_PORT="5432"
+DB_SSLMODE="disable"
+APP_CONF_HASH=""
+source "$SCRIPT_DIR/hooks.sh"
 
 # -----------------------------------------------------------------------------
 # 2. Utility Functions
@@ -38,163 +37,174 @@ hook() { if declare -F "$1" >/dev/null; then "$1"; fi; }
 hr() { echo "-----------------------------------------------------------------------------"; }
 random_port() { shuf -i 30000-40000 -n 1; }
 
-container_exists() { docker container inspect "$INSTANCE_NAME" >/dev/null 2>&1; }
-
-require_conf() {
+load_settings() {
     if [ ! -f "$CONF_FILE" ]; then
-        echo "[ERROR] [Casdoor] $CONF_FILE not found. Run 'bash cli.sh init' first."
-        exit 1
+        echo "[ERROR] [Casdoor] $CONF_FILE not found. Run 'bash cli.sh init' first." >&2
+        return 1
+    fi
+    set -a
+    source <(sed 's/\r$//' "$CONF_FILE")
+    set +a
+    export IMAGE DOCKER_NETWORK DB_PORT DB_SSLMODE APP_CONF_HASH
+    if [[ ! "${INSTANCE_NAME:-}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+        echo "[ERROR] INSTANCE_NAME must match [a-z0-9][a-z0-9_-]*." >&2
+        return 1
+    fi
+}
+
+validate_settings() {
+    local key
+    for key in CASDOOR_PORT DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD DB_SSLMODE; do
+        if [ -z "${!key:-}" ]; then
+            echo "[ERROR] Fill $key in $CONF_FILE. The database and dedicated account must already exist." >&2
+            return 1
+        fi
+        if [[ "${!key}" == *$'\n'* || "${!key}" == *$'\r'* ]]; then
+            echo "[ERROR] $key must be a single-line value for Casdoor app.conf." >&2
+            return 1
+        fi
+    done
+    if [[ ! "$DB_NAME" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+        echo "[ERROR] DB_NAME must contain letters, digits and underscores, beginning with a letter or underscore." >&2
+        return 1
+    fi
+}
+
+compose() {
+    docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
+        --project-name "$INSTANCE_NAME" -f "$COMPOSE_FILE" "$@"
+}
+
+require_managed_container() {
+    local container labels
+    container="$(docker container ls -a --filter "name=^/$INSTANCE_NAME$" --format '{{.Names}}')"
+    [ -n "$container" ] || return 0
+    labels="$(docker container inspect --format '{{index .Config.Labels "com.docker.compose.project"}}/{{index .Config.Labels "com.docker.compose.service"}}' "$INSTANCE_NAME")"
+    if [ "$labels" != "$INSTANCE_NAME/casdoor" ]; then
+        echo "[ERROR] '$INSTANCE_NAME' belongs to another deployment. Choose a unique INSTANCE_NAME; this container will not be modified." >&2
+        return 1
     fi
 }
 
 # -----------------------------------------------------------------------------
 # 3. Service Config Rendering
 # -----------------------------------------------------------------------------
-generate_settings() {
-    # --external is an init-only flag; it just records WITH_BUNDLED_DB in settings_casdoor.conf
-    local with_db="true"
-    for a in "${EXTRA_ARGS[@]}"; do [ "$a" = "--external" ] && with_db="false"; done
-
-    local port=$(random_port)
-    local name="$NAME_OVERRIDE"
+generate_settings() (
+    umask 077
+    local name="$NAME_OVERRIDE" port ts
+    port=$(random_port)
     if [ -z "$name" ]; then
-        local ts=$(date +%s)
+        ts=$(date +%s)
         name="casdoor_${ts: -4}"
     fi
-
-    sed -e "s/{{INSTANCE_NAME}}/${name}/g" \
-        -e "s/{{CASDOOR_PORT}}/${port}/g" \
-        -e "s/{{WITH_BUNDLED_DB}}/${with_db}/g" \
+    if [[ ! "$name" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+        echo "[ERROR] Invalid instance name: $name" >&2
+        return 1
+    fi
+    sed -e "s/{{INSTANCE_NAME}}/$name/g" \
+        -e "s/{{CASDOOR_PORT}}/$port/g" \
         "$TPL_DIR/settings_casdoor.conf.tpl" > "$CONF_FILE"
+)
+
+generate_compose() {
+    cat "$TPL_DIR/compose.yaml.tpl" > "$COMPOSE_FILE"
+    if [ -n "$DOCKER_NETWORK" ]; then
+        cat >> "$COMPOSE_FILE" <<'YAML'
+networks:
+  default:
+    external: true
+    name: "${DOCKER_NETWORK}"
+YAML
+    fi
 }
 
 # -----------------------------------------------------------------------------
 # 4. Lifecycle Functions (do_xxx)
 # -----------------------------------------------------------------------------
 do_init() {
-    hr
-    echo "[INFO] [Casdoor] Initializing configuration..."
-    hr
-
-    [ ! -f "$CONF_FILE" ] && generate_settings
-    source "$CONF_FILE"
-
-    # Bundled DB init + app.conf rendering happen in hooks.sh (on_init)
-    hook on_init
-
+    [ -f "$CONF_FILE" ] || generate_settings
+    load_settings
+    generate_compose
     mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data"
-
     hr
-    echo "[SUCCESS] [Casdoor] Initialization completed!"
-    hr
-    if [ "$WITH_BUNDLED_DB" = "true" ]; then
-        echo "[INFO] Bundled paradedb config: settings_paradedb.conf (managed by deploy_services/paradedb)"
-        echo "[INFO] Run 'bash cli.sh start' to bring up DB + Casdoor."
-    else
-        echo "[IMPORTANT] External DB mode: fill EXT_DB_* in settings_casdoor.conf, then 'bash cli.sh start'."
-    fi
+    echo "[SUCCESS] [Casdoor] Settings and Compose YAML are ready; existing settings were preserved."
+    echo "Fill DB_* in $CONF_FILE, prepare the database/account and shared network, then run 'bash cli.sh start'."
+    echo "Compose definition: $COMPOSE_FILE (generated; edit templates/compose.yaml.tpl for persistent changes)."
     hr
 }
 
 do_start() {
-    require_conf
-    set -a; source "$CONF_FILE"; set +a
-
-    # Bundled DB + networking + app.conf re-render happen in hooks.sh (on_start),
-    # which also fills HOOK_RUN_ARGS (e.g. --network) for the docker run below
-    hook on_start
-
+    load_settings
+    validate_settings
+    require_managed_container
+    render_app_conf
+    generate_compose
     mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data"
+    compose up -d
+    echo "[INFO] [Casdoor] Container started: http://<SERVER_IP>:$CASDOOR_PORT; inspect logs for readiness."
+}
 
-    hr
-    echo "[INFO] [Casdoor] Starting service (Container: ${INSTANCE_NAME})..."
-    hr
-    if container_exists; then
-        echo "[INFO] Container '${INSTANCE_NAME}' already exists, starting it..."
-        docker start "$INSTANCE_NAME" >/dev/null
-    else
-        docker run -d \
-            --name "$INSTANCE_NAME" \
-            "${HOOK_RUN_ARGS[@]}" \
-            -p "${CASDOOR_PORT}:8000" \
-            -e RUNNING_IN_DOCKER=true \
-            -v "$(app_conf_path):/conf/app.conf" \
-            -v "$CONF_DIR/data/${INSTANCE_NAME}_data:/data" \
-            --restart unless-stopped \
-            "$IMAGE" >/dev/null
-    fi
-    hr
-    echo "[SUCCESS] [Casdoor] Service is up! Web UI: http://<SERVER_IP>:${CASDOOR_PORT}"
-    hr
+do_update() {
+    load_settings
+    validate_settings
+    require_managed_container
+    render_app_conf
+    generate_compose
+    mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data"
+    compose pull
+    compose up -d
+    echo "[SUCCESS] [Casdoor] Image updated; settings, data and external dependencies were preserved."
 }
 
 do_stop() {
-    require_conf
-    source "$CONF_FILE"
-    hr
-    echo "[INFO] [Casdoor] Stopping service..."
-    hr
-    docker stop "$INSTANCE_NAME" 2>/dev/null || true
-    hook on_stop
+    load_settings
+    require_managed_container
+    [ -f "$COMPOSE_FILE" ] || generate_compose
+    compose stop
 }
 
 do_rm() {
-    require_conf
-    source "$CONF_FILE"
-    hr
-    echo "[INFO] [Casdoor] Removing containers..."
-    hr
-    docker stop "$INSTANCE_NAME" 2>/dev/null || true
-    docker rm "$INSTANCE_NAME" 2>/dev/null || true
-    hook on_rm
+    load_settings
+    require_managed_container
+    [ -f "$COMPOSE_FILE" ] || generate_compose
+    compose down
 }
 
 do_purge() {
-    require_conf
-    source "$CONF_FILE"
-    hr
-    echo "[WARN] WARNING: Preparing to completely destroy Casdoor (and bundled DB) data!"
-    hr
-    docker stop "$INSTANCE_NAME" 2>/dev/null || true
-    docker rm "$INSTANCE_NAME" 2>/dev/null || true
-
+    do_rm
     local data_dir="$CONF_DIR/data/${INSTANCE_NAME}_data"
     if [ -d "$data_dir" ]; then
-        echo "Removing local data directory..."
-        # Data is bind-mounted and often written as root inside the container;
-        # delete via a throwaway root container to avoid host permission errors.
-        docker run --rm -v "${CONF_DIR}/data:/purge" alpine rm -rf "/purge/${INSTANCE_NAME}_data"
+        docker run --rm -v "$CONF_DIR/data:/purge" alpine rm -rf "/purge/${INSTANCE_NAME}_data"
     fi
-
-    hook on_purge
-
-    hr
-    echo "[SUCCESS] [Casdoor] Data purged (configs preserved)."
-    hr
+    echo "[SUCCESS] [Casdoor] Local app data purged; app.conf, settings and external database were preserved."
 }
 
 do_reset() {
     do_purge
-    echo "[INFO] [Casdoor] Removing all generated settings under this service..."
-    rm -f "$CONF_DIR"/settings*.conf
-    hr
-    echo "[SUCCESS] [Casdoor] Reset complete (restored to pristine source files)."
-    hr
+    rm -f -- "$CONF_FILE" "$COMPOSE_FILE" "$CONF_DIR/data/${INSTANCE_NAME}_config/app.conf"
+    echo "[SUCCESS] [Casdoor] This app's settings and generated files removed; external services were preserved."
+}
+
+do_network() {
+    load_settings
+    docker network inspect "${DOCKER_NETWORK:-${INSTANCE_NAME}_default}" \
+        --format 'Network: {{.Name}}
+Containers: {{range .Containers}}{{.Name}} {{end}}'
 }
 
 do_help() {
-    echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--external] [--conf PATH] [--name NAME]"
-    echo "  init        : Generate settings_casdoor.conf (+ bundled paradedb) and render app.conf, without starting"
-    echo "  start       : Start bundled DB (if any) then the Casdoor container"
-    echo "  up          : init + start"
-    echo "  stop        : Stop Casdoor (and bundled DB)"
-    echo "  rm          : Remove containers (Preserves data and configs)"
-    echo "  purge       : DANGER - Remove containers AND delete data (Preserves configs)"
-    echo "  reset       : DANGER - purge AND delete ALL settings (back to pristine source files)"
-    echo "  network ls  : Show the app network and attached containers"
-    echo ""
-    echo "  --external  : (init/up only) Do NOT bundle paradedb; connect to an external DB"
-    echo "                configured via EXT_DB_* in settings_casdoor.conf."
+    echo "Usage: $0 {init|start|up|update|stop|rm|purge|reset|network} [--conf PATH] [--name NAME]"
+    echo "  init       : Generate missing settings, then Compose YAML; do not start containers"
+    echo "  start      : Render app.conf and Compose YAML, then run compose up -d"
+    echo "  up         : init + start (requires completed database configuration)"
+    echo "  update     : Pull the configured app image and run compose up -d"
+    echo "  stop       : Stop only Casdoor"
+    echo "  rm         : Remove only this Compose project; preserve settings and bind mounts"
+    echo "  purge      : DANGER - rm and delete only data/<INSTANCE_NAME>_data"
+    echo "  reset      : DANGER - purge and delete this app's settings, YAML and app.conf"
+    echo "  network ls : Inspect the configured network without modifying it"
+    echo "  --conf PATH: Settings path; YAML and data live relative to its directory"
+    echo "  --name NAME: Instance name written only when generating new settings"
 }
 
 # -----------------------------------------------------------------------------
@@ -203,11 +213,12 @@ do_help() {
 case "$COMMAND" in
     init)    do_init ;;
     start)   do_start ;;
-    up)      do_init && do_start ;;
+    up)      do_init; do_start ;;
+    update)  do_update ;;
     stop)    do_stop ;;
     rm)      do_rm ;;
     purge)   do_purge ;;
     reset)   do_reset ;;
-    network) if declare -F on_network >/dev/null; then require_conf; source "$CONF_FILE"; on_network "${EXTRA_ARGS[@]}"; else do_help; fi ;;
+    network) do_network ;;
     *)       do_help ;;
 esac

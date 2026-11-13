@@ -1,171 +1,105 @@
 # script_tools
 
-基于**“目录即服务 (Service as a Directory)”**理念构建的高度自治 Docker 部署工具集。
+基于“目录即服务”的 Docker Compose 部署工具集。
 
 ## 设计哲学与核心特性
 
-本项目面向的是“开箱即用、高度隔离、资产内聚”的部署体验。我们将底层的复杂逻辑完全抽离，让新用户只需关注最简单直观的操作。
-
-- **目录即服务 (Service as a Directory)**：一个服务运行所需的全部元素（配置、脚本、持久化数据）全部内聚在专属文件夹中。备份或迁移服务，只需拷贝这一个文件夹，目录在服务器上也可随意移动而不会失效。
-- **纯原生 Docker 架构**：全面弃用 `docker-compose`。无论是单体应用还是复合微服务系统，全靠纯粹的 `docker run` 与原生隔离网络来拉起。只需安装最基础的 Docker，即刻可用。
-- **傻瓜化与防冲突沙箱**：屏蔽繁琐的 Docker 参数。所有的生命周期管理标准化封装在 `cli.sh` 中（例如 `bash cli.sh up` 一键启动）。内置端口与实例名防碰撞机制，在同机拉起 10 个相同的服务也互不干扰。
-- **高自由度组装**：通过“委托式级联”机制实现服务的原子化。既能一键拉起全套业务栈（如 New API + 专属数据库 + Redis），也能通过改一行配置，将业务无缝接入已有的外部中间件。
+- 目录即服务：每个部署目录集中保存本服务的部署定义、配置、密钥和相对路径 bind mount 数据。停止服务或完成一致性备份后，可复制该目录到新机器重新启动；共享基础服务的数据从其自己的目录单独迁移。
+- 简化生命周期：`cli.sh` 保留配置初始化、随机密钥生成和服务专属操作，容器创建、网络接入和配置变化后的重建交给 Docker Compose。
+- 共享基础服务：PostgreSQL、Redis、RustFS 独立部署。应用通过人工填写的 `settings_<应用名>.conf` 连接同机或远程服务，不级联创建、启停或清理依赖。多个应用共享 PostgreSQL 时，各用独立数据库和账号。
 
 ## 项目架构
 
-本项目将部署逻辑分为三层：
-- **`deploy_services/` (基础部署)**：原子的、可独立运行的服务组件（如 paradedb, rustfs, redis）。
-- **`deploy_apps/` (复合应用)**：按用途划分的应用层组件（如 lobechat 最小数据库版、openwebui、casdoor、newapi、sub2api），可组合多个基础服务实现一键部署。
-- **`tools/` (宿主机工具)**：用于存放宿主机（非 Docker 级别的）环境配置和开发工具（如 code-server、nginx 反代网关、docker 宿主机配置 ufw-docker 等）。
-
-> **深入了解底层实现？**
-> 我们把所有底层架构细节剥离到了设计文档中。如果你想了解我们为何摒弃 `docker-compose`、多环境隔离的动态组网原理以及为何使用特殊机制注入配置，请参阅：
-> - [`docs/design/core.md`](docs/design/core.md)：核心编排逻辑、配置透传机制与沙箱网络原理。
-> - [`docs/design/command.md`](docs/design/command.md)：生命周期命令的实现规范。
+- `deploy_services/`：ParadeDB、Redis、RustFS，独立管理配置、凭证和数据。
+- `deploy_apps/`：Casdoor、LobeHub（目录名 `lobechat`）、New API、Open WebUI、Sub2API，每个 Compose 项目只部署应用自身。Open WebUI 默认保留 SQLite，可选接入外部 PostgreSQL。
+- `tools/`：宿主机工具，包括 code-server、nginx、certbot 和 Docker 防火墙配置，各用自己的命令接口。
 
 ## 设计文档
 
-修改本项目代码或新增服务前，请先阅读 `docs/design/` 下的三份设计文档，了解统一的约定与背后原因（后续维护或 AI 协作时应以这三份为准）：
+修改代码或新增服务前，请阅读：
 
-- `docs/design/command.md`：cli.sh 的命令与代码设计（命令集、`do_` 前缀命名、脚本结构、`hr()` 回显规范、`start` 幂等语义）。
-- `docs/design/core.md`：服务/目录的组织与部署设计（目录即服务、单容器优先用 docker run、`source + -e` 配置注入、实例命名、委托式级联与 `--conf`/`--name` 通用参数、app 级网络组装）。
-- `docs/design/document.md`：服务说明文档（`docs/{deploy_services,deploy_apps,tools}/*.md`，按脚本三层归位）的章节结构规范，以 `docs/deploy_apps/openwebui.md` 为模板。
+- [服务设计](docs/design/core.md)：目录与数据归属、Compose 配置注入、共享网络和实例隔离。
+- [命令规范](docs/design/command.md)：生命周期命令、`update`、薄 CLI 与清理边界。
+- [服务文档规范](docs/design/document.md)：各服务说明的结构与内容要求。
 
-## 部署场景
+## 部署流程
 
-### 场景一：独立部署单个基础服务
+部署脚本面向 Linux，使用 Bash、Docker Engine、Compose v2 插件及常用命令行工具（如 OpenSSL、sed、shuf），Compose 命令为 `docker compose`。流程为先初始化 settings，再生成引用其变量的 YAML，人工填写配置后启动。生成 YAML 会在 `init/start/update` 时刷新，持久调整容器定义应修改 `templates/compose.yaml.tpl`。
 
-假设你需要一个独立的 ParadeDB 数据库做测试：
+### 先独立启动基础服务
+
+同机互通时，管理员先创建共享网络：
 
 ```bash
+docker network create shared_services
+
 cd deploy_services/paradedb
-```
-
-**方式 1：标准部署（推荐，支持自定义配置）**
-
-首先，仅生成默认配置 `settings_paradedb.conf`（单容器服务用原生 `docker run`，不再渲染 `compose.yml`）：
-
-```bash
 bash cli.sh init
-```
-
-你可以随时打开 `settings_paradedb.conf` 修改随机生成的端口、密码或 `INSTANCE_NAME`（修改名字可实现同机器多实例）。确认无误后，启动服务：
-
-```bash
+# Set DOCKER_NETWORK="shared_services" in settings_paradedb.conf.
+# Review instance name, credentials and port publishing.
 bash cli.sh start
 ```
 
-**方式 2：快速一键启动（全部使用随机默认值）**
+Redis、RustFS 也从各自目录初始化、配置并启动。共享网络在 YAML 中声明为 `external: true`，不会随任何应用的 `rm` 删除。
 
-```bash
-bash cli.sh up
-```
+管理员提前为每个应用创建独立数据库与账号，以及需要的 bucket、对象存储凭证和 Redis 隔离资源。建库建号示例见 [ParadeDB 说明](docs/deploy_services/paradedb.md)。仓库 Redis 模板尚未提供认证，不应直接作为多个应用共享的实例；可按应用独立部署，或由管理员先配置认证和隔离。
 
-**发生了什么？**
-1. 在执行 `init` 时，脚本会自动生成 `settings_paradedb.conf`，里面包含了随机分配的端口和默认的 `INSTANCE_NAME`，并预建数据目录 `./data/<INSTANCE_NAME>_data`。实例名采用 **时间戳后缀** 规则：独立部署时为 `<服务名>_<4位时间戳>`（例如 `paradedb_8421`）。
-2. 执行 `start` 时，`cli.sh` 先 `source settings_paradedb.conf`，再用原生 `docker run` 直接拉起隔离的容器（容器名等于 `INSTANCE_NAME`，如 `paradedb_8421`；数据保存在 `./data/<INSTANCE_NAME>_data`，如 `./data/paradedb_8421_data`）。
+### 再配置并启动应用
 
-如果后续需要防端口冲突或起第二个库，只需修改 `settings_paradedb.conf` 里的 `INSTANCE_NAME`/端口等参数，再执行 `bash cli.sh rm && bash cli.sh start` 重建生效（数据在 `./data` 卷里，不会丢）。
-
-### 场景二：一键部署全栈业务 (以 New API 为例)
-
-当你需要拉起一套包含 ParadeDB + Redis + New API 的完整架构时：
+以 New API 为例：
 
 ```bash
 cd deploy_apps/newapi
-```
-
-**方式 1：标准部署（推荐，支持自定义配置）**
-
-首先，仅生成配置文件：
-
-```bash
 bash cli.sh init
-```
-
-此时会在 newapi 目录下生成三份配置：`settings_newapi.conf`（New API 自身的端口与实例名）、`settings_paradedb.conf` 和 `settings_redis.conf`（两个附带依赖的凭证与端口）。按需检查修改后，执行全栈启动：
-
-```bash
+# Fill DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD and REDIS_CONN_STRING.
+# Set DOCKER_NETWORK="shared_services" for services on the same host.
 bash cli.sh start
 ```
 
-**方式 2：快速一键启动（全部使用随机默认值）**
+同机容器通过唯一的实例容器名和内部端口连接，例如 `pg-shared:5432`，不要使用 PostgreSQL 的随机宿主机端口。容器内的 `localhost` 指当前应用容器。远程服务填写从容器可访问的主机名/IP 和监听端口；只连接远程服务时 `DOCKER_NETWORK` 可以留空。
 
-如果你只想要一个完全独立的新环境，可直接一键拉起：
+settings 是 Bash 配置，密码建议用单引号；分字段 `DB_*` 填原值，脚本负责连接串转义或字段映射。手工填写完整 Redis URI 时需自行 URL 编码凭证。现有 settings 不会被 `init` 覆盖或自动补字段，缺少的字段按模板人工补充。
 
-```bash
-bash cli.sh up
-```
+### 服务与工具说明
 
-**发生了什么？**
-- **委托式级联**：控制器调用各基础服务自己的 `cli.sh --conf settings_X.conf --name <实例名>_X`，把依赖的配置与数据都安置在 newapi 目录下；实例名如 `newapi_8421_paradedb`、`newapi_8421_redis`。
-- **连接串实时拼装**：`SQL_DSN` 与 `REDIS_CONN_STRING` 不落盘，每次 `start` 时从两份附带配置实时读取拼装（host 为依赖容器名），经 `-e` 注入 New API 容器。
-- **app 级组网**：`start` 时建一个 user-defined network `<实例名>_net`，把 ParadeDB、Redis 与 New API 容器接入，按名互通；全程纯 `docker run`，不依赖 docker compose。
+三个基础服务和五个应用均使用 Compose，并提供 `update`。各项目的配置与特殊操作见对应说明：
 
-### 场景三：部署单容器应用 (以 Open WebUI 为例)
-
-Open WebUI 是单容器服务，不依赖 docker compose，可直接一键拉起：
-
-```bash
-cd deploy_apps/openwebui
-bash cli.sh up
-```
-
-**发生了什么？**
-1. `init` 生成 `settings_openwebui.conf`（随机端口、随机密钥、时间戳实例名），并预建数据目录 `./data/<INSTANCE_NAME>_data`，不渲染 `compose.yml`。
-2. `start` 时 `cli.sh` 先 `source settings_openwebui.conf`，再用 `docker run` 直接拉起容器，把配置通过 `-e VAR` 透传进去。
-3. 修改 `settings_openwebui.conf` 后，需先 `bash cli.sh rm` 再 `bash cli.sh start` 重建生效（数据在 `./data` 卷里，不会丢）。
+- 基础服务：[ParadeDB](docs/deploy_services/paradedb.md)、[Redis](docs/deploy_services/redis.md)、[RustFS](docs/deploy_services/rustfs.md)。
+- 应用：[Casdoor](docs/deploy_apps/casdoor.md)、[LobeHub](docs/deploy_apps/lobechat.md)、[New API](docs/deploy_apps/newapi.md)、[Open WebUI](docs/deploy_apps/openwebui.md)、[Sub2API](docs/deploy_apps/sub2api.md)。
+- 宿主机工具：[code-server](docs/tools/codeserver.md)、[Nginx](docs/tools/nginx.md)、[Certbot](docs/tools/certbot.md)、[Docker 防火墙](docs/tools/docker-setup.md)。
 
 ## 常用管理命令
 
-所有目录下的 `cli.sh` 都遵循相同的命令规范。
+以下命令适用于 `deploy_services/` 和 `deploy_apps/`。在对应目录执行，也可用 `--conf PATH` 指定配置位置（父目录须已存在）、用 `init --name NAME` 为新配置指定唯一实例名。不同实例必须使用不同名称；同名容器属于其他部署时，CLI 拒绝操作。
 
-初始化或重载配置与模板：
 ```bash
-bash cli.sh init
+bash cli.sh init      # Generate missing settings, then YAML; no long-running service.
+bash cli.sh start     # Refresh YAML and apply the current configuration.
+bash cli.sh up        # init + start; fill external connection settings first.
+bash cli.sh update    # Pull IMAGE, then apply it with Compose.
+bash cli.sh stop      # Stop only this project.
+bash cli.sh rm        # Remove its containers/private network; keep settings and data.
 ```
 
-仅启动服务（依赖配置已生成）：
+LobeHub 首次生成 JWKS 时优先使用宿主机 Node.js；没有 Node.js 时会运行一次性应用容器生成密钥。
+
+`update` 执行 `docker compose pull` 后执行 `docker compose up -d`，镜像由 settings 中的 `IMAGE` 决定，保留配置、密钥和 bind mount 数据。镜像可能自动升级数据库结构，升级前应备份并核对版本要求；该命令不负责 PostgreSQL 跨主版本数据迁移。RustFS 还会根据拉取后的镜像修正数据目录属主。
+
+危险的清理命令：
+
 ```bash
-bash cli.sh start
+bash cli.sh purge    # Remove this project and its own local runtime data.
+bash cli.sh reset    # purge, then remove this settings file and generated YAML.
 ```
 
-快速启动（等同于 init + start）：
-```bash
-bash cli.sh up
-```
+应用的 `purge/reset` 不清空外部数据库、Redis 或 S3；LobeHub 无本地运行数据，`purge` 等同 `rm`。Casdoor 的 `purge` 保留 app.conf，`reset` 再将其删除。部分本地文件由容器用户写入，脚本用一次性 root 容器删除本实例数据。不要以 `purge/reset` 代替升级或迁移，`reset` 删除应用密钥后可能无法解密保留在外部库中的数据。
 
-停止服务：
-```bash
-bash cli.sh stop
-```
+查看状态使用 `docker ps -a --filter 'name=^/<INSTANCE_NAME>$'`，日志使用 `docker logs -f <INSTANCE_NAME>`，执行前替换实例名占位符。应用的 `bash cli.sh network ls` 只读显示配置网络；没有 `status` 命令。`start/update` 返回成功表示 Compose 已启动容器，应用就绪情况查看日志或健康状态。
 
-销毁容器（保留本地 `./data/` 数据卷）：
-```bash
-bash cli.sh rm
-```
+## 复制目录迁移
 
-**【危险】**销毁容器并彻底清除对应的 `./data` 数据卷（但保留 settings_<服务名>.conf 配置）：
-```bash
-bash cli.sh purge
-```
+停止服务或完成一致性备份后，复制完整部署目录，包括 CLI、模板、settings、生成 YAML、密钥和本地 data。目标机器准备 Docker Engine、Compose v2 和所需共享网络，保留实例名与数据目录名的对应关系，核对端口、连接地址和镜像版本后运行 `start`。物理复制 PostgreSQL 数据目录必须先停止数据库并使用兼容主版本；不能直接复制正在写入的数据库目录。
 
-> 容器数据多由内部 root 进程写入，宿主机普通用户直接删会因属主权限失败。为此 docker 服务的 `purge` 会借一个一次性 root 容器来删除数据目录，无需 `sudo` 也能彻底清干净；删除失败会显式报错，不会假装成功。
+应用目录只携带应用本地资产。共享 PostgreSQL、Redis 和 RustFS 的配置及数据由各自服务目录独立备份和迁移。LobeHub 的业务数据全部位于外部依赖中；Open WebUI 默认 SQLite 与上传文件保存在本地数据目录。复制恢复必须保留应用加密密钥，切换 Open WebUI 的数据库类型不会自动搬迁数据。
 
-**【危险·最强】**彻底重置：在 `purge` 基础上再删除该服务目录下所有 settings（`settings_<服务名>.conf` 及 `settings_*.conf` 等），把目录还原成 `git clone` 时的纯源文件态：
-```bash
-bash cli.sh reset
-```
-
-> 破坏力阶梯为 `rm` → `purge` → `reset`。`reset` 会一并删掉含随机密钥的 `settings_<服务名>.conf`，且为复合服务清空附带依赖的全部生成配置；执行后需重新 `init` 才能再次启动。
-
-查看容器运行状态（`status` 命令已移除，直接用原生 docker）：
-```bash
-docker ps -a --filter name=<INSTANCE_NAME>
-```
-
-## 已知 TODO / 个人待优化的清单
-
-- 增加更新镜像并重启的命令
-- 增加一键关闭并清除已有数据的命令
-- 命名优化(持续)
+使用 `--conf` 将配置放在其他目录时，还需携带对应 CLI 和 templates；复制配置目录本身不能替代部署脚本。自定义配置位置应放在版本库外，或自行补充忽略规则。
