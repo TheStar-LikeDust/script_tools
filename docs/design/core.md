@@ -15,7 +15,7 @@
 源文件与生成物的区分：
 
 - 源文件（纳入版本管理）：`cli.sh`、有实际用途的 `hooks.sh`、`templates/*.tpl`、该服务的说明文档。
-- 生成物（不提交，由 `.gitignore` 忽略）：`settings_<服务名>.conf`、`settings_<服务名>.compose.yaml`、应用生成的附属配置、各服务的 `data/`。
+- 生成物（不提交，由 `.gitignore` 忽略）：`settings_<服务名>.conf`、`<服务名>.compose.yaml`、应用生成的附属配置、各服务的 `data/`。
 
 实例配置统一命名为 `settings_<服务名>.conf`，模板为 `templates/settings_<服务名>.conf.tpl`。应用与依赖配置分开保存：Casdoor 共两份，New API、Sub2API 共三份，LobeHub 共四份。应用记录 `PARADEDB_CONF`、`REDIS_CONF`、`RUSTFS_CONF` 中实际需要的路径，并通过服务接口获取连接信息。
 
@@ -36,7 +36,7 @@
 - `update` 执行 `docker compose pull` 后再次 `up -d`，保留配置、凭证和数据。
 - `stop/rm/purge/reset` 只管理本 Compose 项目。`rm` 保留数据和配置，`purge` 删除本实例整套数据，`reset` 再删除本实例配置及生成物；目录外依赖 settings 保留。独立基础服务不参与应用清理，bind mount 按明确路径删除。
 
-三个基础服务的 `templates/compose.yaml.tpl` 只维护各自服务片段；独立部署和 `render` 使用同一入口。应用组合 `services:`、依赖片段、自身片段及顶层网络，不复制基础服务的启动参数、挂载和健康检查。生成的 `settings_<应用名>.compose.yaml` 不作为手工维护入口。
+三个基础服务的 `templates/compose.yaml.tpl` 只维护各自服务片段；独立部署和 `render` 使用同一入口。应用组合 `services:`、依赖片段、自身片段及顶层网络，不复制基础服务的启动参数、挂载和健康检查。生成的 `<应用名>.compose.yaml` 不作为手工维护入口。
 
 四个应用先通过 `init --config-only --conf PATH` 准备或读取全部 settings，再调用 `env/render`。默认各份配置放在同一目录，总 Compose 的相对挂载始终以应用 `CONF_DIR` 为准。显式指定目录外的依赖配置不改变这个数据位置，也不表示外接已运行服务。不得再对这些组合配置调用服务 CLI 的独立启停或清理命令。
 

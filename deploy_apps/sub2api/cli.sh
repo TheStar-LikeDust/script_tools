@@ -29,7 +29,9 @@ TPL_DIR="$SCRIPT_DIR/templates"
 CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_sub2api.conf}"
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 CONF_FILE="$CONF_DIR/$(basename "$CONF_FILE")"
-COMPOSE_FILE="${CONF_FILE%.conf}.compose.yaml"
+COMPOSE_BASENAME="$(basename "$CONF_FILE")"
+COMPOSE_BASENAME="${COMPOSE_BASENAME#settings_}"
+COMPOSE_FILE="$CONF_DIR/${COMPOSE_BASENAME%.conf}.compose.yaml"
 IMAGE="weishaw/sub2api:latest"
 DOCKER_NETWORK=""
 PARADEDB_CONF=""
@@ -316,13 +318,15 @@ do_purge() {
 do_reset() {
     do_purge
     rm -f -- "$CONF_FILE" "$COMPOSE_FILE"
-    local dependency_conf dependency_dir dependency_compose
+    local dependency_conf dependency_dir dependency_compose dependency_compose_basename
     for dependency_conf in "$(resolve_dependency_conf paradedb)" "$(resolve_dependency_conf redis)"; do
         dependency_dir="$(cd "$(dirname "$dependency_conf")" && pwd)"
         dependency_conf="$dependency_dir/$(basename "$dependency_conf")"
+        dependency_compose_basename="${dependency_conf##*/}"
+        dependency_compose_basename="${dependency_compose_basename#settings_}"
         case "$dependency_conf" in
             "$CONF_DIR"/*)
-                dependency_compose="${dependency_conf%.conf}.compose.yaml"
+                dependency_compose="$dependency_dir/${dependency_compose_basename%.conf}.compose.yaml"
                 rm -f -- "$dependency_conf" "$dependency_compose"
                 ;;
         esac

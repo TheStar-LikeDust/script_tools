@@ -205,7 +205,7 @@ prepare_rustfs_data() {
 }
 
 remove_dependency_settings() {
-    local dependency_name dependency_path dependency_conf dependency_dir
+    local dependency_name dependency_path dependency_conf dependency_dir dependency_compose_basename
     for dependency_name in paradedb redis rustfs; do
         case "$dependency_name" in
             paradedb) dependency_path="$PARADEDB_CONF" ;;
@@ -215,8 +215,10 @@ remove_dependency_settings() {
         [ -n "$dependency_path" ] || continue
         dependency_conf="$(resolve_dependency_conf "$dependency_name")" || return
         dependency_dir="$(cd "$(dirname "$dependency_conf")" && pwd)" || return
+        dependency_compose_basename="${dependency_conf##*/}"
+        dependency_compose_basename="${dependency_compose_basename#settings_}"
         case "$dependency_dir" in
-            "$CONF_DIR"|"$CONF_DIR"/*) rm -f -- "$dependency_conf" "${dependency_conf%.conf}.compose.yaml" || return ;;
+            "$CONF_DIR"|"$CONF_DIR"/*) rm -f -- "$dependency_conf" "$dependency_dir/${dependency_compose_basename%.conf}.compose.yaml" || return ;;
         esac
     done
 }

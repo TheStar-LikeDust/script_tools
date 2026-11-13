@@ -55,7 +55,9 @@ CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_<服务名>.conf}"
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 CONF_FILE="$CONF_DIR/$(basename "$CONF_FILE")"
 IMAGE="..."
-COMPOSE_FILE="${CONF_FILE%.conf}.compose.yaml"
+CONF_BASENAME="$(basename "$CONF_FILE")"
+COMPOSE_BASENAME="${CONF_BASENAME#settings_}"
+COMPOSE_FILE="$CONF_DIR/${COMPOSE_BASENAME%.conf}.compose.yaml"
 
 # -----------------------------------------------------------------------------
 # 2. Utility Functions

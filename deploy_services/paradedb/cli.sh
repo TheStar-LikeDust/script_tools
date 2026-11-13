@@ -67,7 +67,8 @@ CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_paradedb.conf}"
 # Config + data live together; data dir is derived from the config file's directory at runtime
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 CONF_FILE="$CONF_DIR/$(basename "$CONF_FILE")"
-COMPOSE_FILE="${CONF_FILE%.conf}.compose.yaml"
+CONF_BASENAME="$(basename "${CONF_FILE%.conf}")"
+COMPOSE_FILE="$CONF_DIR/${CONF_BASENAME#settings_}.compose.yaml"
 source "$SCRIPT_DIR/hooks.sh"
 
 # -----------------------------------------------------------------------------

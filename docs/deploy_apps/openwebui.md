@@ -72,7 +72,7 @@ DB_SSLMODE="require"
 
 #### init
 
-仅在 settings 缺失时生成配置与随机密钥，再生成 `settings_openwebui.compose.yaml` 和本应用数据目录；允许先留空外部连接信息。
+仅在 settings 缺失时生成配置与随机密钥，再生成 `openwebui.compose.yaml` 和本应用数据目录；允许先留空外部连接信息。
 
 ```bash
 if [ ! -f "$CONF_FILE" ]; then generate_settings; fi

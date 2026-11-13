@@ -56,7 +56,8 @@ TPL_DIR="$SCRIPT_DIR/templates"
 CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_redis.conf}"
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 CONF_FILE="$CONF_DIR/$(basename "$CONF_FILE")"
-COMPOSE_FILE="${CONF_FILE%.conf}.compose.yaml"
+CONF_BASENAME="$(basename "${CONF_FILE%.conf}")"
+COMPOSE_FILE="$CONF_DIR/${CONF_BASENAME#settings_}.compose.yaml"
 source "$SCRIPT_DIR/hooks.sh"
 
 # -----------------------------------------------------------------------------

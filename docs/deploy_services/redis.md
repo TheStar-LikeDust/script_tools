@@ -57,7 +57,7 @@ bash cli.sh purge
 
 #### init
 
-生成或补齐配置，随后组合 `services:` 开头、Redis 服务片段和可选顶层网络配置，生成 `settings_redis.compose.yaml` 并创建数据目录，不启动容器。
+生成或补齐配置，随后组合 `services:` 开头、Redis 服务片段和可选顶层网络配置，生成 `redis.compose.yaml` 并创建数据目录，不启动容器。
 
 `init/up` 接受以下初始值参数：
 

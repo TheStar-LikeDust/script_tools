@@ -23,7 +23,9 @@ TPL_DIR="$SCRIPT_DIR/templates"
 CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_casdoor.conf}"
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 CONF_FILE="$CONF_DIR/$(basename "$CONF_FILE")"
-COMPOSE_FILE="${CONF_FILE%.conf}.compose.yaml"
+COMPOSE_BASENAME="$(basename "$CONF_FILE")"
+COMPOSE_BASENAME="${COMPOSE_BASENAME#settings_}"
+COMPOSE_FILE="$CONF_DIR/${COMPOSE_BASENAME%.conf}.compose.yaml"
 IMAGE="casbin/casdoor:latest"
 DOCKER_NETWORK=""
 CASDOOR_PORT=""
@@ -223,10 +225,12 @@ do_purge() {
 do_reset() {
     do_purge
     rm -f -- "$CONF_FILE" "$COMPOSE_FILE"
-    local dependency_conf
+    local dependency_conf dependency_compose_basename
     dependency_conf="$(resolve_dependency_conf paradedb)"
+    dependency_compose_basename="${dependency_conf##*/}"
+    dependency_compose_basename="${dependency_compose_basename#settings_}"
     case "$dependency_conf" in
-        "$CONF_DIR"/*) rm -f -- "$dependency_conf" "${dependency_conf%.conf}.compose.yaml" ;;
+        "$CONF_DIR"/*) rm -f -- "$dependency_conf" "${dependency_conf%/*}/${dependency_compose_basename%.conf}.compose.yaml" ;;
     esac
     rm -rf -- "$CONF_DIR/data/${INSTANCE_NAME}_config"
     echo "[SUCCESS] [Casdoor] This instance's stack, persistent data and generated configuration were removed."

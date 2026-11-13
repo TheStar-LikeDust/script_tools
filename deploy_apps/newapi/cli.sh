@@ -27,7 +27,9 @@ TPL_DIR="$SCRIPT_DIR/templates"
 CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_newapi.conf}"
 CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
 CONF_FILE="$CONF_DIR/$(basename "$CONF_FILE")"
-COMPOSE_FILE="${CONF_FILE%.conf}.compose.yaml"
+COMPOSE_BASENAME="$(basename "$CONF_FILE")"
+COMPOSE_BASENAME="${COMPOSE_BASENAME#settings_}"
+COMPOSE_FILE="$CONF_DIR/${COMPOSE_BASENAME%.conf}.compose.yaml"
 
 source "$SCRIPT_DIR/hooks.sh"
 
