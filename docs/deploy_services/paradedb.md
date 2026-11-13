@@ -4,7 +4,7 @@
 
 > ParadeDB 是基于 PostgreSQL 的关系型数据库，提供 pg_search 检索扩展，可供多个应用连接各自的专用数据库。
 
-ParadeDB 独立于应用部署和管理。`init` 生成密码、配置文件及 Compose YAML，数据保存在配置目录下的相对路径 bind mount 中。
+本目录用于独立部署 ParadeDB。`init` 生成密码、配置文件及 Compose YAML，数据保存在配置目录下的相对路径 bind mount 中。Casdoor、LobeHub、New API、Sub2API 默认各自携带 PostgreSQL，无需先运行本目录的 CLI；配套实例由应用 Compose 管理。
 
 ## 2. 核心配置项
 
@@ -21,7 +21,7 @@ ParadeDB 独立于应用部署和管理。`init` 生成密码、配置文件及 
 
 ## 3. 备注
 
-- CLI 为镜像预加载 `pg_search`；各应用需要的数据库扩展由管理员在目标库中启用。需要 pgvector 时，应使用包含该扩展的镜像，再执行 `CREATE EXTENSION vector;`，不能仅凭镜像名称假定扩展已可用。
+- 本目录模板显式设置 `shared_preload_libraries=pg_search`。当前上游 PostgreSQL 17 镜像源码包含 pgvector，并默认预加载 `pg_search,pg_cron,pg_stat_statements`；其首次启动脚本依赖完整预加载列表。独立部署时应按实际镜像调整本目录模板；四个应用的配套模板保留镜像默认配置。扩展的安装与数据库内启用是两回事，所需扩展以实际镜像及应用迁移要求为准。
 - 配置共享网络后，同一网络中的应用使用 `${INSTANCE_NAME}:5432` 连接。容器内的 `localhost` 指向容器自身；宿主机或远程客户端使用服务器地址和 `DB_PORT`。
 - 作为共享 PostgreSQL 使用时，管理员需为每个应用预先创建独立数据库和账号，授予所需的最小权限；不要将 `DB_USER` 管理员凭证直接复用于应用。
 - 共享网络由管理员提前创建，例如 `docker network create shared_services`，再将 `DOCKER_NETWORK` 设为 `shared_services`。本服务只接入网络，不创建或删除共享网络。
@@ -120,7 +120,7 @@ rm -f -- "$CONF_FILE" "$COMPOSE_FILE"
 
 ## 6. 为应用创建数据库和账号
 
-由数据库管理员在 psql 中执行，以下以 New API 为例；每个应用分别使用自己的名称和密码：
+以下仅适用于管理员手工对接本目录的独立数据库，默认配套应用不需要这些操作。由管理员在 psql 中执行，以下以 New API 为例；每个应用分别使用自己的名称和密码：
 
 ```sql
 CREATE ROLE newapi LOGIN;
@@ -146,4 +146,4 @@ pg_restore -h <target_host> -p <target_port> -U <app_user> -d <app_db> \
   --no-owner --no-acl --exit-on-error app.dump
 ```
 
-恢复目标库和专用账号须预先创建，扩展由管理员准备。数据库备份需与应用自己的加密密钥一同保管；复制应用目录不会包含此数据库的数据。
+恢复目标库和专用账号须预先创建，扩展由管理员准备。数据库备份需与应用自己的加密密钥一同保管；复制应用目录不会包含本目录独立数据库的数据。默认配套数据库位于应用配置目录的 `data/<INSTANCE_NAME>_postgres_data`，重建应用容器时保留，应用 `purge/reset` 会清理该配套数据。

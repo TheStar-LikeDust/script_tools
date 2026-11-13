@@ -26,12 +26,17 @@ CONF_FILE="$CONF_DIR/$(basename "$CONF_FILE")"
 COMPOSE_FILE="${CONF_FILE%.conf}.compose.yaml"
 IMAGE="lobehub/lobehub:latest"
 DOCKER_NETWORK=""
+LOBECHAT_PORT=""
+POSTGRES_IMAGE=""
+REDIS_IMAGE=""
+RUSTFS_IMAGE=""
+RUSTFS_INIT_IMAGE=""
 DB_HOST=""
-DB_PORT=5432
+DB_PORT=""
 DB_NAME=""
 DB_USER=""
 DB_PASSWORD=""
-DB_SSLMODE=disable
+DB_SSLMODE=""
 APP_URL=""
 KEY_VAULTS_SECRET=""
 AUTH_SECRET=""
@@ -47,9 +52,12 @@ OPENAI_API_KEY=""
 OPENAI_PROXY_URL=""
 OPENAI_MODEL_LIST=""
 REDIS_URL=""
-REDIS_DATABASE=0
-REDIS_PREFIX=lobechat
+REDIS_DATABASE=""
+REDIS_PREFIX=""
+RUSTFS_PORT=""
+RUSTFS_ADMIN_PORT=""
 S3_ENDPOINT=""
+S3_INTERNAL_ENDPOINT=""
 S3_BUCKET=""
 S3_ACCESS_KEY_ID=""
 S3_SECRET_ACCESS_KEY=""
@@ -60,7 +68,69 @@ S3_SECRET_ACCESS_KEY=""
 hr() { echo "-----------------------------------------------------------------------------"; }
 random_port() { shuf -i 30000-40000 -n 1; }
 random_secret() { openssl rand -base64 32; }
-random_initial_email() { printf 'lobe-%s@example.invalid' "$(openssl rand -hex 8)"; }
+
+save_setting() (
+    umask 077
+    local key="$1" value="$2" line found=false temp_file
+    temp_file="$(mktemp "${CONF_FILE}.tmp.XXXXXX")"
+    trap 'rm -f -- "$temp_file"' EXIT
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+        if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?${key}= ]]; then
+            if [ "$found" = false ]; then
+                printf '%s=%q\n' "$key" "$value"
+                found=true
+            fi
+        else
+            printf '%s\n' "$line"
+        fi
+    done < "$CONF_FILE" > "$temp_file"
+    if [ "$found" = false ]; then
+        printf '%s=%q\n' "$key" "$value" >> "$temp_file"
+    fi
+    mv -- "$temp_file" "$CONF_FILE"
+)
+
+complete_settings() {
+    local key value
+    for key in LOBECHAT_PORT POSTGRES_IMAGE REDIS_IMAGE RUSTFS_IMAGE RUSTFS_INIT_IMAGE \
+        DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD DB_SSLMODE \
+        REDIS_DATABASE REDIS_PREFIX REDIS_URL RUSTFS_PORT RUSTFS_ADMIN_PORT \
+        S3_INTERNAL_ENDPOINT S3_BUCKET S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY; do
+        [ -z "${!key:-}" ] || continue
+        case "$key" in
+            LOBECHAT_PORT) value="$(random_port)" ;;
+            POSTGRES_IMAGE) value="paradedb/paradedb:latest-pg17" ;;
+            REDIS_IMAGE) value="redis:7-alpine" ;;
+            RUSTFS_IMAGE) value="rustfs/rustfs:latest" ;;
+            RUSTFS_INIT_IMAGE) value="rustfs/rc:latest" ;;
+            DB_HOST) value="${INSTANCE_NAME}_postgres" ;;
+            DB_PORT) value=5432 ;;
+            DB_NAME|DB_USER|S3_BUCKET) value=lobechat ;;
+            DB_PASSWORD|S3_SECRET_ACCESS_KEY) value="$(random_secret)" ;;
+            DB_SSLMODE) value=disable ;;
+            REDIS_DATABASE) value=0 ;;
+            REDIS_PREFIX) value="$INSTANCE_NAME" ;;
+            REDIS_URL) value="redis://${INSTANCE_NAME}_redis:6379/${REDIS_DATABASE}" ;;
+            RUSTFS_PORT)
+                value="$(random_port)"
+                while [ "$value" = "$LOBECHAT_PORT" ] || [ "$value" = "$RUSTFS_ADMIN_PORT" ]; do
+                    value="$(random_port)"
+                done
+                ;;
+            RUSTFS_ADMIN_PORT)
+                value="$(random_port)"
+                while [ "$value" = "$LOBECHAT_PORT" ] || [ "$value" = "$RUSTFS_PORT" ]; do
+                    value="$(random_port)"
+                done
+                ;;
+            S3_INTERNAL_ENDPOINT) value="http://${INSTANCE_NAME}_rustfs:9000" ;;
+            S3_ACCESS_KEY_ID) value="$(openssl rand -hex 10)" ;;
+        esac
+        save_setting "$key" "$value"
+        printf -v "$key" '%s' "$value"
+    done
+}
 
 generate_jwks() {
     local -a node_cmd
@@ -83,6 +153,43 @@ process.stdout.write(JSON.stringify({ keys: [key] }));
 JS
 }
 
+ensure_jwks() {
+    if [ -z "$JWKS_KEY" ]; then
+        JWKS_KEY="$(generate_jwks)"
+        save_setting JWKS_KEY "$JWKS_KEY"
+    fi
+    export JWKS_KEY
+}
+
+rustfs_uid_gid() (
+    local probe_name="" passwd_dir passwd_file uid_gid
+    passwd_dir="$(mktemp -d)"
+    passwd_file="$passwd_dir/passwd"
+    trap '[ -z "$probe_name" ] || docker rm -f "$probe_name" >/dev/null; rm -f -- "$passwd_file"; rmdir -- "$passwd_dir"' EXIT
+
+    if ! docker image inspect "$RUSTFS_IMAGE" >/dev/null 2>&1; then
+        docker pull "$RUSTFS_IMAGE" >/dev/null
+    fi
+    probe_name="$(docker create "$RUSTFS_IMAGE")"
+    docker cp "$probe_name:/etc/passwd" "$passwd_file" >/dev/null
+    uid_gid="$(awk -F: '$1 == "rustfs" { print $3 ":" $4; exit }' "$passwd_file")"
+    if [ -z "$uid_gid" ]; then
+        echo "[ERROR] [RustFS] Could not resolve the UID/GID for image user 'rustfs'." >&2
+        return 1
+    fi
+    printf '%s' "$uid_gid"
+)
+
+ensure_data_owner() {
+    local data_dir="$1" uid_gid current_owner
+    uid_gid="$(rustfs_uid_gid)"
+    current_owner="$(stat -c '%u:%g' "$data_dir")"
+    if [ "$current_owner" != "$uid_gid" ]; then
+        echo "[INFO] [RustFS] Setting data directory ownership to $uid_gid."
+        chown -R "$uid_gid" "$data_dir"
+    fi
+}
+
 urlencode() {
     local LC_ALL=C value="$1" char index
     for ((index = 0; index < ${#value}; index++)); do
@@ -102,7 +209,7 @@ load_settings() {
     set -a
     source <(sed 's/\r$//' "$CONF_FILE")
     set +a
-    if [[ ! "$INSTANCE_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+    if [[ ! "${INSTANCE_NAME:-}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
         echo "[ERROR] INSTANCE_NAME must match [a-z0-9][a-z0-9_-]*." >&2
         return 1
     fi
@@ -116,17 +223,24 @@ load_settings() {
         db_host="[$db_host]"
     fi
     DATABASE_URL="postgresql://$(urlencode "$DB_USER"):$(urlencode "$DB_PASSWORD")@${db_host}:${DB_PORT}/$(urlencode "$DB_NAME")?sslmode=$(urlencode "$DB_SSLMODE")"
-    export IMAGE DOCKER_NETWORK DATABASE_URL
+    export IMAGE DOCKER_NETWORK DATABASE_URL POSTGRES_IMAGE REDIS_IMAGE RUSTFS_IMAGE RUSTFS_INIT_IMAGE
 }
 
 require_connections() {
     local key
-    for key in DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD DB_SSLMODE REDIS_URL S3_ENDPOINT S3_BUCKET S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY APP_URL JWKS_KEY KEY_VAULTS_SECRET AUTH_SECRET; do
+    for key in LOBECHAT_PORT POSTGRES_IMAGE REDIS_IMAGE RUSTFS_IMAGE RUSTFS_INIT_IMAGE \
+        DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD DB_SSLMODE REDIS_URL REDIS_DATABASE REDIS_PREFIX \
+        RUSTFS_PORT RUSTFS_ADMIN_PORT S3_ENDPOINT S3_INTERNAL_ENDPOINT S3_BUCKET \
+        S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY APP_URL AUTH_ALLOWED_EMAILS KEY_VAULTS_SECRET AUTH_SECRET; do
         if [ -z "${!key:-}" ]; then
-            echo "[ERROR] Set $key in $CONF_FILE before starting. Provision external dependencies first; see docs/deploy_apps/lobechat.md." >&2
+            echo "[ERROR] Set $key in $CONF_FILE before starting. Run init to complete bundled defaults; see docs/deploy_apps/lobechat.md." >&2
             return 1
         fi
     done
+    if [ "$LOBECHAT_PORT" = "$RUSTFS_PORT" ] || [ "$LOBECHAT_PORT" = "$RUSTFS_ADMIN_PORT" ] || [ "$RUSTFS_PORT" = "$RUSTFS_ADMIN_PORT" ]; then
+        echo "[ERROR] LOBECHAT_PORT, RUSTFS_PORT and RUSTFS_ADMIN_PORT must be different." >&2
+        return 1
+    fi
 }
 
 compose() {
@@ -135,14 +249,18 @@ compose() {
 }
 
 require_managed_container() {
-    local container labels
-    container="$(docker container ls -a --filter "name=^/${INSTANCE_NAME}$" --format '{{.Names}}')"
-    [ -n "$container" ] || return 0
-    labels="$(docker container inspect --format '{{index .Config.Labels "com.docker.compose.project"}}/{{index .Config.Labels "com.docker.compose.service"}}' "$INSTANCE_NAME")"
-    if [ "$labels" != "$INSTANCE_NAME/lobechat" ]; then
-        echo "[ERROR] '$INSTANCE_NAME' belongs to another deployment. Choose a unique INSTANCE_NAME; this container will not be modified." >&2
-        return 1
-    fi
+    local service container_name container labels
+    for service in lobechat postgres redis rustfs rustfs_init; do
+        container_name="${INSTANCE_NAME}_${service}"
+        if [ "$service" = lobechat ]; then container_name="$INSTANCE_NAME"; fi
+        container="$(docker container ls -a --filter "name=^/$container_name$" --format '{{.Names}}')"
+        [ -n "$container" ] || continue
+        labels="$(docker container inspect --format '{{index .Config.Labels "com.docker.compose.project"}}/{{index .Config.Labels "com.docker.compose.service"}}' "$container_name")"
+        if [ "$labels" != "$INSTANCE_NAME/$service" ]; then
+            echo "[ERROR] '$container_name' belongs to another deployment. Choose a unique INSTANCE_NAME; this container will not be modified." >&2
+            return 1
+        fi
+    done
 }
 
 # -----------------------------------------------------------------------------
@@ -150,12 +268,10 @@ require_managed_container() {
 # -----------------------------------------------------------------------------
 generate_settings() (
     umask 077
-    local port vault_sec auth_sec jwks initial_email name
+    local port vault_sec auth_sec name
     port=$(random_port)
     vault_sec=$(random_secret)
     auth_sec=$(random_secret)
-    jwks=$(generate_jwks)
-    initial_email=$(random_initial_email)
     name="$NAME_OVERRIDE"
     if [ -z "$name" ]; then
         local ts
@@ -172,8 +288,6 @@ generate_settings() (
         -e "s|{{LOBECHAT_PORT}}|${port}|g" \
         -e "s|{{KEY_VAULTS_SECRET}}|${vault_sec}|g" \
         -e "s|{{AUTH_SECRET}}|${auth_sec}|g" \
-        -e "s|{{JWKS_KEY}}|${jwks}|g" \
-        -e "s|{{AUTH_ALLOWED_EMAILS}}|${initial_email}|g" \
         "$TPL_DIR/settings_lobechat.conf.tpl" > "$CONF_FILE"
 )
 
@@ -196,10 +310,16 @@ do_init() {
     hr
     if [ ! -f "$CONF_FILE" ]; then generate_settings; fi
     load_settings
+    complete_settings
+    load_settings
     generate_compose
-    echo "[SUCCESS] LobeHub settings and Compose YAML are ready."
-    echo "Configure DB_*, Redis, S3 and APP_URL in $CONF_FILE, then run 'bash cli.sh start'."
-    echo "Keep the generated keys; replace AUTH_ALLOWED_EMAILS with a real email or domain."
+    mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_postgres_data" \
+        "$CONF_DIR/data/${INSTANCE_NAME}_redis_data" "$CONF_DIR/data/${INSTANCE_NAME}_rustfs_data"
+    echo "[SUCCESS] LobeHub, PostgreSQL, Redis and RustFS configuration is ready."
+    echo "Set APP_URL, S3_ENDPOINT and a real AUTH_ALLOWED_EMAILS in $CONF_FILE before start."
+    echo "Application port: $LOBECHAT_PORT; S3 API port: $RUSTFS_PORT; RustFS console port: $RUSTFS_ADMIN_PORT."
+    echo "Existing nonempty settings and keys were preserved. Missing JWKS will be generated on start."
+    echo "Bucket CORS is not configured automatically; see docs/deploy_apps/lobechat.md."
     echo "Compose definition: $COMPOSE_FILE (generated; edit templates/compose.yaml.tpl instead)"
     hr
 }
@@ -208,10 +328,14 @@ do_start() {
     load_settings
     require_connections
     require_managed_container
+    ensure_jwks
     generate_compose
+    mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_postgres_data" \
+        "$CONF_DIR/data/${INSTANCE_NAME}_redis_data" "$CONF_DIR/data/${INSTANCE_NAME}_rustfs_data"
+    ensure_data_owner "$CONF_DIR/data/${INSTANCE_NAME}_rustfs_data"
     hr
     compose up -d
-    echo "[INFO] LobeHub container started: $APP_URL"
+    echo "[INFO] LobeHub stack started: $APP_URL"
     echo "Check database migration and readiness: docker logs -f $INSTANCE_NAME"
     hr
 }
@@ -220,11 +344,15 @@ do_update() {
     load_settings
     require_connections
     require_managed_container
+    ensure_jwks
     generate_compose
+    mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_postgres_data" \
+        "$CONF_DIR/data/${INSTANCE_NAME}_redis_data" "$CONF_DIR/data/${INSTANCE_NAME}_rustfs_data"
     hr
     compose pull
+    ensure_data_owner "$CONF_DIR/data/${INSTANCE_NAME}_rustfs_data"
     compose up -d
-    echo "[SUCCESS] LobeHub image updated; settings, keys and external data were preserved."
+    echo "[SUCCESS] LobeHub and bundled dependencies updated; settings, keys and data were preserved."
     hr
 }
 
@@ -244,13 +372,19 @@ do_rm() {
 
 do_purge() {
     do_rm
-    echo "[INFO] LobeHub has no application-owned bind mount to purge. External PostgreSQL, Redis and S3 data were preserved."
+    if [ -d "$CONF_DIR/data" ]; then
+        docker run --rm -v "$CONF_DIR/data:/purge" alpine rm -rf \
+            "/purge/${INSTANCE_NAME}_postgres_data" \
+            "/purge/${INSTANCE_NAME}_redis_data" \
+            "/purge/${INSTANCE_NAME}_rustfs_data"
+    fi
+    echo "[SUCCESS] This instance's PostgreSQL, Redis and RustFS data removed; settings and keys were preserved."
 }
 
 do_reset() {
     do_purge
     rm -f -- "$CONF_FILE" "$COMPOSE_FILE"
-    echo "[SUCCESS] Removed only this app's settings and generated YAML. Keep a backup of the keys for the external database."
+    echo "[SUCCESS] This instance's stack, data, settings and generated YAML were removed."
 }
 
 do_network() {
@@ -262,18 +396,18 @@ Containers: {{range .Containers}}{{.Name}} {{end}}'
 
 do_help() {
     echo "Usage: $0 {init|start|up|update|stop|rm|purge|reset|network [ls]} [--conf PATH] [--name NAME]"
-    echo "  init    : Generate missing app settings and keys, then Compose YAML; do not start"
-    echo "  start   : Refresh YAML and start only LobeHub with Docker Compose"
-    echo "  up      : init + start (external connections must already be configured)"
-    echo "  update  : Pull the configured image and recreate the app if needed"
-    echo "  stop    : Stop only LobeHub"
-    echo "  rm      : Remove only this Compose project; preserve settings and external data"
-    echo "  purge   : Same as rm; this app has no local bind mount to delete"
-    echo "  reset   : DANGER - purge, then delete only this settings file and generated YAML"
+    echo "  init    : Generate/complete stack settings, Compose YAML and data dirs; no Docker required"
+    echo "  start   : Generate missing JWKS and start LobeHub with PostgreSQL, Redis and RustFS"
+    echo "  up      : init + start (APP_URL, S3_ENDPOINT and AUTH_ALLOWED_EMAILS must be set)"
+    echo "  update  : Pull all configured stack images and apply them with Compose"
+    echo "  stop    : Stop this entire LobeHub stack"
+    echo "  rm      : Remove this stack's containers/private network; preserve settings and data"
+    echo "  purge   : DANGER - rm and delete this instance's PostgreSQL, Redis and RustFS data"
+    echo "  reset   : DANGER - purge, then delete this settings file and generated YAML"
     echo "  network : Inspect the configured Docker network; never create or remove it"
-    echo "  --conf PATH : Config location; Compose YAML stays beside it"
+    echo "  --conf PATH : Config location; Compose YAML and all stack data stay beside it"
     echo "  --name NAME : Instance name written only when generating new settings"
-    echo "With Node.js installed, init needs no Docker; otherwise it uses the app image once for JWKS."
+    echo "On start, missing JWKS uses host Node.js or a one-off application container."
 }
 
 # -----------------------------------------------------------------------------

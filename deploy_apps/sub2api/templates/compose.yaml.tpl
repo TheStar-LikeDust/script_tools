@@ -4,6 +4,11 @@ services:
     image: "${IMAGE:-weishaw/sub2api:latest}"
     container_name: "${INSTANCE_NAME:?INSTANCE_NAME is required}"
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "${SUB2API_PORT:-8080}:8080"
     volumes:
@@ -72,3 +77,33 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+  postgres:
+    image: "${POSTGRES_IMAGE:-paradedb/paradedb:latest-pg17}"
+    container_name: "${INSTANCE_NAME}_postgres"
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${DB_USER:?DB_USER is required}"
+      POSTGRES_PASSWORD: "${DB_PASSWORD:?DB_PASSWORD is required}"
+      POSTGRES_DB: "${DB_NAME:?DB_NAME is required}"
+    volumes:
+      - "./data/${INSTANCE_NAME}_postgres_data:/var/lib/postgresql/data"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  redis:
+    image: "${REDIS_IMAGE:-redis:7-alpine}"
+    container_name: "${INSTANCE_NAME}_redis"
+    restart: unless-stopped
+    volumes:
+      - "./data/${INSTANCE_NAME}_redis_data:/data"
+    command: ["redis-server", "--save", "60", "1000", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

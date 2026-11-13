@@ -4,20 +4,23 @@
 
 > Sub2API 是一个 AI 模型订阅转 API 的网关，将上游订阅账号统一聚合为标准 API，提供账号管理、密钥分发与请求转发能力。
 
-应用由 Docker Compose 单独管理。PostgreSQL 与 Redis 必须先独立部署；管理员为每个应用预先建立独立数据库和账号，在应用 settings 中填写地址、连接凭证和应用自身设置。
+默认通过一个 Docker Compose 项目部署 Sub2API、PostgreSQL 和 Redis。`init` 生成配套连接、数据库密码和应用密钥，`start` 一起启动整套实例，无需先部署 `deploy_services/` 中的服务。
 
 ## 2. 核心配置项
 
 ### settings_sub2api.conf
 
-- `INSTANCE_NAME`：应用容器与 Compose 项目名。
+- `INSTANCE_NAME`：应用容器与 Compose 项目名；配套容器分别为 `<INSTANCE_NAME>_postgres` 和 `<INSTANCE_NAME>_redis`。
 - `IMAGE`：Sub2API 镜像，默认为 `weishaw/sub2api:latest`。
+- `POSTGRES_IMAGE` / `REDIS_IMAGE`：配套镜像，默认 `paradedb/paradedb:latest-pg17`、`redis:7-alpine`。
 - `SUB2API_PORT`：宿主机 Web/API 端口，容器端口为 `8080`。
-- `DOCKER_NETWORK`：可选的预先创建的 Docker 网络。同机连接其他 Compose 部署的服务时，应用与基础服务需接入同一网络。
-- `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` / `DB_SSLMODE`：管理员预先创建的 Sub2API 专用数据库及账号。端口默认 `5432`，SSL 模式默认 `disable`。
-- `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DB`：独立 Redis 服务的地址、端口、可选密码和逻辑库编号。端口默认 `6379`。
+- `DOCKER_NETWORK`：默认留空，Compose 自动创建本实例私有网络；指定时接入管理员预先创建的 external 网络。
+- `DB_HOST` / `DB_PORT`：默认 `<INSTANCE_NAME>_postgres:5432`，使用配套容器地址及内部端口。
+- `DB_NAME` / `DB_USER` / `DB_PASSWORD`：库名和账号默认 `sub2api`，密码由 `init` 随机生成一次；配套 PostgreSQL 首次启动使用同一组配置创建数据库和账号。
+- `DB_SSLMODE`：默认 `disable`。
+- `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DB`：默认 `<INSTANCE_NAME>_redis:6379`、空密码及逻辑库 `0`；配套 Redis 未启用认证。
 - `DATABASE_MAX_OPEN_CONNS` / `DATABASE_MAX_IDLE_CONNS` / `DATABASE_CONN_MAX_LIFETIME_MINUTES` / `DATABASE_CONN_MAX_IDLE_TIME_MINUTES`：数据库连接池参数。
-- `REDIS_POOL_SIZE` / `REDIS_MIN_IDLE_CONNS` / `REDIS_ENABLE_TLS`：Redis 连接参数。
+- `REDIS_POOL_SIZE` / `REDIS_MIN_IDLE_CONNS` / `REDIS_ENABLE_TLS`：Redis 连接参数，TLS 默认 `false`。
 - `SERVER_MODE` / `RUN_MODE`：服务运行模式，默认 `release` / `standard`。
 - `ADMIN_EMAIL` / `ADMIN_PASSWORD`：首次启动时用于初始化管理员账号的凭证。
 - `JWT_SECRET`：会话签名密钥；首次启动后不要更改，否则已有会话失效。
@@ -32,55 +35,44 @@
 ## 3. 备注
 
 - 容器以 `AUTO_SETUP=true` 自动执行数据库迁移；首次启动按 `ADMIN_EMAIL` / `ADMIN_PASSWORD` 创建管理员账号。
-- 多个应用共用 PostgreSQL 实例时，必须各自使用独立数据库和账号。请管理员预先建库、建号并授予最小所需权限。
-- 同机容器使用共享 Docker 网络上的数据库/Redis 容器名及容器端口。应用容器内的 `localhost` 指向 Sub2API 自身；远程连接填写容器可达的 DNS 名称或 IP 与端口。
-- `DOCKER_NETWORK` 为空时，应用使用自己的 Compose 网络。要访问同机基础服务，应先由管理员创建共享网络，例如 `docker network create shared_services`，然后在 PostgreSQL、Redis 和 Sub2API 的 settings 中写入 `DOCKER_NETWORK="shared_services"`。
-- 当前 Redis 基础服务默认未启用认证。只有 Redis 实例已配置对应密码与访问隔离时，才在 `REDIS_PASSWORD` 填入密码；不要把无认证 Redis 暴露到不可信网络。
-- `rm` 仅移除 Sub2API 容器和应用私有网络；`purge` 仅额外删除本应用目录下的 bind mount 数据；`reset` 仅额外删除当前应用 settings 和生成的 Compose YAML。以上命令都不会触及 PostgreSQL、Redis、它们的配置或数据。
-- 本地 `./data/<INSTANCE_NAME>_data` 挂载到 `/app/data`；主要业务数据由外部 PostgreSQL 管理，复制应用目录不包含数据库或 Redis 数据。
+- PostgreSQL 和 Redis 不发布宿主机端口，应用等待两者健康后启动。配套 ParadeDB 保留镜像默认预加载配置；Redis 启用 AOF 持久化。
+- 每个实例拥有自己的数据库和 Redis 容器及数据目录；相同默认库名、账号不会跨实例共享数据。Redis 库编号用于区分数据，不提供账号权限隔离。
+- `init` 只写本地文件和创建目录，不运行 Docker。重复执行只补齐缺失或空的默认依赖字段，保留已有非空值、数据库密码、管理员凭证及 JWT/TOTP 密钥；不自动补造已丢失的应用密钥。
+- 配套 PostgreSQL 仅在数据目录为空时读取初始化账号和密码；修改 settings 中的密码不会重置已有数据库。容器重启或移除后，保留 settings 和持久化目录即可由 `start` 重建。
+- 当前流程只编排默认配套依赖，修改连接字段不会自动关闭配套容器；外接依赖的切换暂不提供自动化。容器内 `localhost` 指向当前容器。
+- 应用数据保存在 `data/<INSTANCE_NAME>_data`，PostgreSQL 在 `data/<INSTANCE_NAME>_postgres_data`，Redis 在 `data/<INSTANCE_NAME>_redis_data`，均相对 settings 所在目录。
 - settings 是 Bash 配置。包含特殊字符的密码和密钥使用单引号并按 Bash 单引号规则转义；生成的 Compose YAML 只包含变量引用，不落入密码值。
-- 同名容器属于其他 Compose 项目或服务时，CLI 拒绝操作；不同部署使用唯一实例名。`--conf` 父目录须已存在，生成 YAML 和本地数据位于该目录，CLI 和模板仍从脚本目录读取。
+- 应用及两个配套容器均检查 Compose 项目和服务标记，归属不符时拒绝操作。`--conf` 父目录须已存在，YAML 和整套实例数据位于该目录；CLI 和模板仍从脚本目录读取。
 
 ## 4. 快速执行
 
 ```bash
 cd deploy_apps/sub2api
 bash cli.sh init
-# Fill DB_* and REDIS_*; set DOCKER_NETWORK for same-host services.
 bash cli.sh start
 ```
 
-同机连接示例，`postgres_shared` 与 `redis_sub2api` 分别替换为独立服务的 `INSTANCE_NAME`：
+多实例使用各自配置路径和唯一名称，父目录须已存在：
 
 ```bash
-DOCKER_NETWORK="shared_services"
-DB_HOST="postgres_shared"
-DB_PORT="5432"
-DB_NAME="sub2api"
-DB_USER="sub2api"
-DB_PASSWORD='填写该应用数据库账号的密码'
-REDIS_HOST="redis_sub2api"
-REDIS_PORT="6379"
-REDIS_PASSWORD='填写对应 Redis 密码；无认证实例留空'
-REDIS_DB="0"
+bash cli.sh init --conf /srv/sub2api-main/settings_sub2api.conf --name sub2api_main
+bash cli.sh start --conf /srv/sub2api-main/settings_sub2api.conf
 ```
 
-远程连接时可保留 `DOCKER_NETWORK=""`，例如 `DB_HOST="db.example.com"`、`DB_PORT="5432"`、`DB_SSLMODE="require"`、`REDIS_HOST="cache.example.com"`、`REDIS_PORT="6380"`、`REDIS_ENABLE_TLS="true"`；端口、SSL/TLS 与密码需匹配实际远端服务。Redis DB 编号只区分键空间，不提供权限隔离；当前无认证 Redis 模板应按应用独立部署。
-
-更新应用镜像：
+初始管理员邮箱和密码保存在当前 settings；启动后按日志或健康状态确认应用就绪。更新应用和配套镜像：
 
 ```bash
 bash cli.sh update
 ```
 
-`up` 等价于 `init` 后执行 `start`，适用于连接配置已就绪的实例。停止、移除或清理只作用于应用自身：
+`up` 等价于 `init` 后执行 `start`。停止、移除或清理均作用于本实例整套服务：
 
 ```bash
 bash cli.sh stop
 bash cli.sh rm
-# DANGER: permanently delete this application's local data.
+# DANGER: delete this instance's application, PostgreSQL and Redis data.
 bash cli.sh purge
-# DANGER: also delete this app's settings and YAML.
+# DANGER: also delete this instance's settings and YAML.
 bash cli.sh reset
 ```
 
@@ -90,11 +82,11 @@ bash cli.sh reset
 
 #### init
 
-生成缺失的 settings，刷新 Compose YAML 并预建应用数据目录，不启动容器。已有 settings 不会被覆盖或自动补字段；缺少的连接项按模板人工填写。
+生成缺失的 settings 和应用凭证，补齐缺失或空的默认数据库、Redis 连接及配套镜像字段，保留已有非空配置和密钥；刷新 Compose YAML 并创建三个持久化目录，不启动容器。补值在原赋值位置写回，字段不存在时才追加。已有配置缺少管理员、端口或 JWT/TOTP 密钥时提示填写或恢复，不自动重建应用密钥。
 
 #### start
 
-检查数据库、Redis 地址、管理员字段和 JWT/TOTP 密钥，刷新 Compose YAML 并启动或重建 Sub2API 容器。容器启动后的就绪情况查看日志或健康状态。
+检查配套镜像、数据库、Redis、管理员字段和 JWT/TOTP 密钥，刷新 YAML 并启动整套实例；Sub2API 等待 PostgreSQL、Redis 健康后启动。容器启动后的就绪情况查看日志或健康状态。
 
 ```bash
 docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
@@ -103,11 +95,11 @@ docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
 
 #### up
 
-依次运行 `init` 和 `start`。外部 PostgreSQL 与 Redis 必须已运行且配置可连接。
+依次运行 `init` 和 `start`，生成默认配套配置并启动本实例全部服务。
 
 #### update
 
-拉取 settings 指定的应用镜像，再按当前配置重建应用；保留 settings、随机密钥和本地数据。
+拉取 settings 指定的应用、PostgreSQL 和 Redis 镜像，再按当前配置应用更新；保留 settings、密钥和全部持久化数据。
 
 ```bash
 docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
@@ -118,7 +110,7 @@ docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
 
 #### stop
 
-停止本 Compose 项目中的 Sub2API 应用容器，不停止共享基础服务。
+停止本 Compose 项目中的 Sub2API、PostgreSQL 和 Redis，保留容器、配置和数据。
 
 ```bash
 docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
@@ -127,7 +119,7 @@ docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
 
 #### rm
 
-移除应用容器和项目私有网络，保留 settings 与应用数据；external 共享网络由其管理员管理。
+移除本实例全部容器和项目私有网络，保留 settings 与三个持久化目录；external 网络保留。再次 `start` 可重建并继续使用原数据。
 
 ```bash
 docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
@@ -136,11 +128,11 @@ docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
 
 #### purge
 
-危险操作：先执行 `rm`，再删除仅属于 Sub2API 的 `data/<INSTANCE_NAME>_data` 目录。共享 PostgreSQL/Redis 及其数据不受影响。
+危险操作：先执行 `rm`，再按明确路径删除本实例的 `data/<INSTANCE_NAME>_data`、`data/<INSTANCE_NAME>_postgres_data` 和 `data/<INSTANCE_NAME>_redis_data`，保留 settings。
 
 #### reset
 
-危险操作：执行 `purge`，再删除当前 settings 文件和生成的 Compose YAML。不会用通配符删除同目录中的其他配置。
+危险操作：执行 `purge` 删除整套实例数据，再删除当前 settings 文件和生成的 Compose YAML；源码、模板、其他实例和独立基础服务不受影响。
 
 #### network ls
 
@@ -148,8 +140,8 @@ docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
 
 ## 6. 升级、备份与复制恢复
 
-应用镜像默认使用滚动标签 `weishaw/sub2api:latest`；可在 `IMAGE` 中指定具体版本或 digest。`update` 会拉取并应用该镜像，应用可能执行数据库结构迁移，升级前备份数据库和配置。
+应用和配套镜像均可在 settings 中指定版本或 digest。`update` 会拉取并应用全部镜像，应用可能执行数据库结构迁移，升级前备份数据库和配置。PostgreSQL 默认固定 17 主版本，脚本不执行跨主版本迁移。
 
-停止应用或完成一致性备份后，复制包含 CLI、templates、settings、生成 YAML 和 `data/<INSTANCE_NAME>_data` 的应用目录。保留 `JWT_SECRET`、`TOTP_ENCRYPTION_KEY`、管理员及 OAuth 配置；JWT 和 TOTP 密钥须与数据库备份对应，不能用 `reset` 生成替代值。
+停止整套实例或完成一致性备份后，复制 CLI、templates、settings、生成 YAML 和本实例三个持久化目录。物理复制 PostgreSQL 数据目录前必须停止数据库，并在目标机器使用兼容主版本。保留数据库密码、`JWT_SECRET`、`TOTP_ENCRYPTION_KEY`、管理员及 OAuth 配置；应用密钥须与数据库备份对应，不能用 `reset` 生成替代值。
 
-PostgreSQL 与 Redis 在各自服务目录独立备份和恢复，应用目录不包含这些数据。目标机器准备共享网络，填写数据库与 Redis 的实际地址和凭证，保持实例名与本地数据目录名对应后运行 `start`。使用外置 `--conf` 时同时携带对应 CLI 和模板。
+配套 PostgreSQL 和 Redis 数据已包含在应用配置目录下，不依赖 `deploy_services/` 的数据目录。目标机器保留实例名与目录对应关系后运行 `start`；仅设置了 `DOCKER_NETWORK` 时需要预建对应网络。使用外置 `--conf` 时同时携带对应 CLI 和模板。

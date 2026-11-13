@@ -17,28 +17,28 @@
 - 源文件（纳入版本管理）：`cli.sh`、有实际用途的 `hooks.sh`、`templates/*.tpl`、该服务的说明文档。
 - 生成物（不提交，由 `.gitignore` 忽略）：`settings_<服务名>.conf`、`settings_<服务名>.compose.yaml`、应用生成的附属配置、各服务的 `data/`。
 
-实例配置文件统一命名为 `settings_<服务名>.conf`（如 `settings_openwebui.conf`、`settings_paradedb.conf`），模板同步命名为 `templates/settings_<服务名>.conf.tpl`。应用只生成自己的配置，通过人工填写的连接信息访问基础服务。
+实例配置文件统一命名为 `settings_<服务名>.conf`（如 `settings_openwebui.conf`、`settings_paradedb.conf`），模板同步命名为 `templates/settings_<服务名>.conf.tpl`。配套应用的 settings 同时保存应用设置及本实例依赖的镜像、连接和凭证，不加载其他基础服务的 settings。
 
 `settings_<服务名>.conf` 含随机密钥/密码，属于本地资产：既不提交，也不会被 `purge` 删除；迁移时与 `data/` 一起打包。
 
 ## 2. 三层架构
 
 - `deploy_services/`：原子基础服务（如 ParadeDB、RustFS、Redis），每个目录独立维护 Compose 定义、配置、凭证和数据，通过 `INSTANCE_NAME` 与端口多开隔离。
-- `deploy_apps/`：应用服务。每个应用只维护自身 Compose 服务，人工在 `settings_<应用名>.conf` 中填写基础服务地址、端口、数据库、账号和密码；应用不管理共享依赖的生命周期。Open WebUI 默认使用本地 SQLite，外部 PostgreSQL 为可选配置。
+- `deploy_apps/`：应用及默认配套依赖。Casdoor 配套 PostgreSQL，New API 和 Sub2API 配套 PostgreSQL、Redis，LobeHub 配套 PostgreSQL、Redis、RustFS，同一个 Compose 项目统一管理。Open WebUI 默认使用本地 SQLite；其已有外部数据库配置方式保留。
 - `tools/`：宿主机工具，包括 code-server、Nginx、Certbot 和 Docker 防火墙配置。该层按工具自身需要设计命令；支持的命令和本地文件位置见各工具说明。
 
 ## 3. 编排方式：Compose 与薄 CLI
 
 容器编排由 Docker Compose 负责，`cli.sh` 只做配置和服务专属操作：
 
-- `init` 生成缺失配置、刷新 Compose YAML，并按需创建本地数据目录，不启动常驻服务。LobeHub 在宿主机没有 Node.js 时，会用一次性应用容器生成 JWKS。
-- `start` 刷新 YAML 并执行 `docker compose up -d`；Compose 负责容器创建、网络和配置变化后的重建。
+- `init` 生成本地配置、刷新 Compose YAML，并按需创建本地数据目录。四个配套应用补齐缺失或空的默认依赖字段，不访问数据库或对象存储，也不启动容器。
+- `start` 刷新 YAML 并执行 `docker compose up -d`；Compose 负责整套实例的容器创建、网络和配置变化后的重建。PostgreSQL 首次启动创建配置指定的账号和数据库，Redis 持久化数据，LobeHub 的一次性初始化服务创建缺失 Bucket。
 - `update` 执行 `docker compose pull` 后再次 `up -d`，保留配置、凭证和数据。
-- `stop`、`rm`、`purge`、`reset` 的范围严格限定为本服务。bind mount 数据由脚本按明确路径清理，不使用 `down -v`；外部共享资源不参与清理。
+- `stop`、`rm`、`purge`、`reset` 的范围限定为本 Compose 项目及其拥有的数据，配套依赖属于应用项目。`rm` 保留持久化数据和配置，`purge` 删除本实例整套数据，`reset` 再删除配置；独立基础服务和外部资源不参与应用清理。bind mount 按明确路径清理，不使用 `down -v`。
 
 服务模板放在 `templates/compose.yaml.tpl`，生成的 `settings_<服务名>.compose.yaml` 是部署目录内可读、可复制的定义。暂不引入动态编排框架；需要复用服务时，复制服务目录或模板并人工调整配置。
 
-同机共享服务使用管理员预先创建的 Docker 网络，例如 `docker network create shared_services`。配置 `DOCKER_NETWORK` 后，脚本在 Compose YAML 中以 `external: true` 接入该网络；脚本不创建或删除该网络。未配置时，Compose 使用本项目私有网络。容器之间使用唯一的实例容器名和容器端口连接，避免多个项目都提供 `paradedb` 等服务名造成 DNS 歧义。容器内的 `localhost` 只指向当前容器；远程服务填写容器可访问的主机地址与端口。
+默认使用 Compose 为整套实例创建的私有网络。配套容器通过带实例名的容器地址和内部端口连接，PostgreSQL、Redis 不发布宿主机端口。需要共享网络时，管理员预先创建并配置 `DOCKER_NETWORK`，脚本以 `external: true` 接入且不创建、删除该网络。容器内的 `localhost` 只指向当前容器。当前四个应用只自动编排默认配套依赖，修改连接字段不会自动移除配套服务。
 
 ## 4. 配置注入：Bash settings 作为权威来源
 
@@ -46,35 +46,39 @@
 
 密码、密钥和包含空格或 `$` 的值需在 settings 中使用单引号并按 Bash 规则转义。例如原值 `a'b$ c` 写为 `DB_PASSWORD='a'\''b$ c'`。只读取可信的 settings，它是可执行的 Bash 配置。密钥不写入版本库；生成的 Compose YAML 只保留变量引用。Casdoor 的 app.conf 按应用需要保存连接凭证并限制文件权限。配置变更后再次执行 `start` 或 `up`，由 Compose 重新创建受影响的容器。
 
-应用的 `DB_*` 填写原始字段，由脚本按镜像所需 DSN 格式转义，或映射到镜像的数据库环境变量；手工填写完整 Redis URI 时需自行对用户名、密码进行 URL 编码。`init` 允许连接字段留空，`start/update` 才检查必需值；应用脚本不建库、建账号或创建 bucket。应用镜像可在专用数据库内初始化业务表和执行结构迁移。应用自身保存到数据库的设置仍遵循应用的覆盖优先级。
+应用的 `DB_*` 保存原始字段，由脚本按镜像所需 DSN 格式转义，或映射到镜像环境变量。配套 PostgreSQL 的 `POSTGRES_DB/POSTGRES_USER/POSTGRES_PASSWORD` 使用相同配置，在空数据目录首次启动时初始化；之后修改 settings 不会改变已有数据库密码。应用镜像负责业务表和迁移。Redis 默认无认证，不生成虚假密码；数据库编号和键前缀只区分数据，不提供权限隔离。
+
+LobeHub 的 `APP_URL`、浏览器使用的 `S3_ENDPOINT` 和真实 `AUTH_ALLOWED_EMAILS` 由使用者填写，`init` 提示缺项，`start/update` 检查必需值。服务端 S3 使用配套 RustFS 的内部地址；Bucket 在启动阶段创建，CORS 暂留待处理。模型和 OAuth 等外部凭证不生成占位值。
 
 ## 5. 实例命名与多开隔离 (INSTANCE_NAME)
 
 实例名由 `cli.sh init` 首次生成 `settings_<服务名>.conf` 时分配，默认采用时间戳后缀；同机多开应显式用 `--name` 指定唯一名称。Compose 项目名需匹配 `[a-z0-9][a-z0-9_-]*`：
 
 - 独立部署：`<服务名>_<4位时间戳>`，如 `paradedb_8421`。
-- 由管理员配置的独立实例：`--name` 可指定可读的完整实例名，应用通过网络地址连接基础服务，不以 `--name` 委托管理基础服务。
+- 由管理员命名的实例：`--name` 指定可读的完整实例名，同时决定配套容器和数据目录前缀。
 
 派生命名约定：
 
-- 容器名：直接等于 `INSTANCE_NAME`。
-- 持久化目录：`<配置文件所在目录>/data/${INSTANCE_NAME}_data`（默认即服务自身目录下的 `./data`）。
+- 应用或独立基础服务容器名：直接等于 `INSTANCE_NAME`。
+- 配套容器名：`${INSTANCE_NAME}_postgres`、`${INSTANCE_NAME}_redis`、`${INSTANCE_NAME}_rustfs`；LobeHub 的 Bucket 初始化容器为 `${INSTANCE_NAME}_rustfs_init`，仅生成实际需要的服务。
+- 应用或独立基础服务持久化目录：`<配置文件所在目录>/data/${INSTANCE_NAME}_data`。
+- 配套持久化目录：同一配置目录下的 `data/${INSTANCE_NAME}_postgres_data`、`data/${INSTANCE_NAME}_redis_data`、`data/${INSTANCE_NAME}_rustfs_data`。
 - 渲染配置目录（如 Casdoor 的 app.conf）：`data/${INSTANCE_NAME}_config`，与数据目录平级，避免配置混入运行数据。
 
-具有本地数据的服务会在 `do_init` / `do_start` 预建挂载目录；LobeHub 没有本地数据挂载。RustFS 另按镜像用户修正数据属主，Casdoor 在 `start/update` 时生成单独的配置文件。
+具有本地数据的服务会在 `do_init` / `do_start` 预建挂载目录。LobeHub 的数据保存在配套依赖的本地挂载目录中；`start/update` 处理 RustFS 数据属主及缺失 JWKS。Casdoor 在 `start/update` 时生成 app.conf。
 
 ## 6. 配置与数据沙箱化 (--conf)
 
 基础服务和应用的 `cli.sh` 提供两个通用参数，使同一脚本可以管理多个独立 Compose 项目：
 
-- `--conf PATH`：指定该实例的 `settings_<服务名>.conf` 位置（默认 `<脚本目录>/settings_<服务名>.conf`）。Compose YAML 和数据目录都由配置文件所在目录推导，数据落在 `<dir-of-conf>/data/<INSTANCE_NAME>_data`。
+- `--conf PATH`：指定该实例的 `settings_<服务名>.conf` 位置（默认 `<脚本目录>/settings_<服务名>.conf`）。Compose YAML、应用及配套依赖数据均由配置文件所在目录推导，具体后缀见第 5 节。
 - `--name NAME`：`init` 时写入完整实例名（默认自动 `<服务名>_<4位时间戳>`），用于 Compose 项目名、容器名和数据目录。
 
-应用只通过网络地址连接这些独立项目，不调用基础服务的生命周期脚本。复制完整部署目录时需携带 CLI、templates、settings、YAML、密钥和本地数据；使用外置 `--conf` 目录时还需携带相应脚本与模板。共享基础服务单独备份和迁移，复制运行中的数据库目录不能作为一致性备份。自定义配置位置需放在版本库外或自行补充忽略规则。
+配套依赖直接声明在应用 Compose 模板中，不调用 `deploy_services/` 的生命周期脚本。复制完整部署目录时携带 CLI、templates、settings、YAML、密钥和本实例全部数据；外置 `--conf` 目录还需携带相应脚本与模板。独立基础服务单独备份和迁移，复制运行中的数据库目录不能作为一致性备份。自定义配置位置需放在版本库外或自行补充忽略规则。
 
 ## 7. 随机化默认凭证与账户名
 
-由脚本提供的初始密码、应用密钥和 Access Key 在 `init` 阶段随机生成并保存到 settings。Sub2API、Open WebUI 的初始管理员账号也采用随机值；外部依赖凭证由管理员提供，不能在应用中另行生成替代值。
+由脚本提供的初始密码、应用密钥和 Access Key 在 `init` 阶段随机生成并保存到 settings。Sub2API、Open WebUI 的初始管理员账号也采用随机值。四个配套应用仅补齐缺失或空的默认依赖字段，保留非空配置、密码和应用密钥；外部凭证仍由使用者提供。
 
 约定：
 
@@ -85,5 +89,5 @@
 有意例外：
 
 - 由应用本体创建或交互设置的管理员（如 Casdoor、New API）按应用自身流程管理。
-- LobeHub 通过注册流程创建用户；settings 的随机 `example.invalid` 邮箱仅是注册允许列表占位值，须改为实际邮箱或域名。
-- 数据库管理员名保留 `postgres`（如 `deploy_services/paradedb` 的 `DB_USER`），用于服务管理；应用使用管理员提前创建的独立数据库与账号，不复用管理员凭证。
+- LobeHub 通过注册流程创建用户，`AUTH_ALLOWED_EMAILS` 留空提示填写真实邮箱或域名；缺失 JWKS 在 `start/update` 生成一次并保存。
+- 独立 ParadeDB 默认管理员名为 `postgres`；配套 PostgreSQL 使用应用 settings 中的默认账号初始化自己的实例。配套 RustFS 同样使用本实例生成的凭证，不引入共享服务的账号和权限管理。

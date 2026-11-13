@@ -6,6 +6,13 @@ services:
     restart: unless-stopped
     ports:
       - "${LOBECHAT_PORT:?LOBECHAT_PORT is required}:3210"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rustfs_init:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: "${DATABASE_URL:-}"
       APP_URL: "${APP_URL:-}"
@@ -26,6 +33,7 @@ services:
       REDIS_DATABASE: "${REDIS_DATABASE:-0}"
       REDIS_PREFIX: "${REDIS_PREFIX:-lobechat}"
       S3_ENDPOINT: "${S3_ENDPOINT:-}"
+      S3_INTERNAL_ENDPOINT: "${S3_INTERNAL_ENDPOINT:-}"
       S3_BUCKET: "${S3_BUCKET:-}"
       S3_ACCESS_KEY_ID: "${S3_ACCESS_KEY_ID:-}"
       S3_SECRET_ACCESS_KEY: "${S3_SECRET_ACCESS_KEY:-}"
@@ -33,3 +41,74 @@ services:
       AUTH_DISABLE_EMAIL_PASSWORD: "0"
       AUTH_EMAIL_VERIFICATION: "0"
       S3_ENABLE_PATH_STYLE: "1"
+      S3_SET_ACL: "0"
+
+  postgres:
+    image: "${POSTGRES_IMAGE:-paradedb/paradedb:latest-pg17}"
+    container_name: "${INSTANCE_NAME}_postgres"
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${DB_USER:?DB_USER is required}"
+      POSTGRES_PASSWORD: "${DB_PASSWORD:?DB_PASSWORD is required}"
+      POSTGRES_DB: "${DB_NAME:?DB_NAME is required}"
+    volumes:
+      - "./data/${INSTANCE_NAME}_postgres_data:/var/lib/postgresql/data"
+    # Keep the image's default pg_search, pg_cron and pg_stat_statements preload.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  redis:
+    image: "${REDIS_IMAGE:-redis:7-alpine}"
+    container_name: "${INSTANCE_NAME}_redis"
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1000", "--appendonly", "yes"]
+    volumes:
+      - "./data/${INSTANCE_NAME}_redis_data:/data"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  rustfs:
+    image: "${RUSTFS_IMAGE:-rustfs/rustfs:latest}"
+    container_name: "${INSTANCE_NAME}_rustfs"
+    restart: unless-stopped
+    ports:
+      - "${RUSTFS_PORT:?RUSTFS_PORT is required}:9000"
+      - "${RUSTFS_ADMIN_PORT:?RUSTFS_ADMIN_PORT is required}:9001"
+    environment:
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_ACCESS_KEY: "${S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID is required}"
+      RUSTFS_SECRET_KEY: "${S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY is required}"
+    command: ["--access-key", "${S3_ACCESS_KEY_ID}", "--secret-key", "${S3_SECRET_ACCESS_KEY}", "/data"]
+    volumes:
+      - "./data/${INSTANCE_NAME}_rustfs_data:/data"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/health >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  rustfs_init:
+    image: "${RUSTFS_INIT_IMAGE:-rustfs/rc:latest}"
+    container_name: "${INSTANCE_NAME}_rustfs_init"
+    restart: "no"
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    environment:
+      S3_INTERNAL_ENDPOINT: "${S3_INTERNAL_ENDPOINT}"
+      S3_BUCKET: "${S3_BUCKET}"
+      S3_ACCESS_KEY_ID: "${S3_ACCESS_KEY_ID}"
+      S3_SECRET_ACCESS_KEY: "${S3_SECRET_ACCESS_KEY}"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        rc alias set local "$${S3_INTERNAL_ENDPOINT}" "$${S3_ACCESS_KEY_ID}" "$${S3_SECRET_ACCESS_KEY}"
+        rc mb --ignore-existing "local/$${S3_BUCKET}"

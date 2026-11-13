@@ -4,6 +4,9 @@ services:
     image: "${IMAGE:-casbin/casdoor:latest}"
     container_name: "${INSTANCE_NAME}"
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       RUNNING_IN_DOCKER: "true"
     labels:
@@ -13,3 +16,20 @@ services:
     volumes:
       - "./data/${INSTANCE_NAME}_data:/data"
       - "./data/${INSTANCE_NAME}_config/app.conf:/conf/app.conf:ro"
+
+  postgres:
+    image: "${POSTGRES_IMAGE:-paradedb/paradedb:latest-pg17}"
+    container_name: "${INSTANCE_NAME}_postgres"
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${DB_USER:?DB_USER is required}"
+      POSTGRES_PASSWORD: "${DB_PASSWORD:?DB_PASSWORD is required}"
+      POSTGRES_DB: "${DB_NAME:?DB_NAME is required}"
+    volumes:
+      - "./data/${INSTANCE_NAME}_postgres_data:/var/lib/postgresql/data"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
