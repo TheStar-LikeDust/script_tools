@@ -4,7 +4,7 @@
 
 > LobeHub 是 AI 对话与知识库应用。本目录使用一个 Docker Compose 项目部署应用及配套 PostgreSQL、Redis、RustFS。
 
-`init` 通过 ParadeDB、Redis、RustFS 的服务 CLI 准备依赖 settings 并组合 Compose 定义；应用地址默认使用 `http://localhost:<LOBECHAT_PORT>`，初始注册邮箱默认随机生成，浏览器可访问的 S3 地址仍需填写。`start` 先启动依赖、调用 RustFS 初始化专属 Bucket 和凭证，再启动 LobeHub。默认使用本实例的配套依赖，外接依赖切换不属于当前流程。
+`init` 通过 ParadeDB、Redis、RustFS 的服务 CLI 准备依赖 settings 并组合 Compose 定义；应用地址默认使用 `http://localhost:<LOBECHAT_PORT>`，S3 地址默认使用 `http://localhost:<RUSTFS_PORT>`，初始注册邮箱默认随机生成。远程访问时应将两个地址改为浏览器可访问的地址。`start` 先启动依赖、调用 RustFS 初始化专属 Bucket 和凭证，再启动 LobeHub。默认使用本实例的配套依赖，外接依赖切换不属于当前流程。
 
 ## 2. 核心配置项
 
@@ -22,7 +22,7 @@
 - `AUTH_ALLOWED_EMAILS`：允许注册的邮箱或域名列表；默认生成并保存随机地址 `admin-<随机值>@example.invalid`，用于初始注册且不接收邮件。确认初始账号建立后，可按需要改成实际允许注册的邮箱或域名，也可由 `init/up --auth-allowed-emails LIST` 注入。
 - `REDIS_DATABASE` / `REDIS_PREFIX`：默认逻辑库 `0`、实例名作为前缀；Redis CLI 生成连接 URL。配套 Redis 无密码、不发布宿主机端口。逻辑库和前缀用于区分数据，不提供账号权限隔离。
 - RustFS：`RUSTFS_CONF` 指向服务 settings；服务生成的 S3 API 和控制台宿主机端口分别映射容器端口 `9000`、`9001`。
-- `S3_ENDPOINT`：必填、浏览器与应用容器都可访问的 S3 API 地址，例如 `https://s3.example.com` 或服务器地址加 `RUSTFS_PORT`；可由 `init/up --s3-endpoint URL` 注入，未提供时留空。
+- `S3_ENDPOINT`：浏览器访问 S3 API 的地址，默认生成 `http://localhost:<RUSTFS_PORT>`；远程访问时改为浏览器可访问的服务器地址或域名。可由 `init/up --s3-endpoint URL` 注入，应用容器使用自动生成的内部 RustFS 地址。
 - `S3_BUCKET`：`init` 按实例名的可读前缀和原始实例名的 SHA-256 哈希前 12 位稳定生成，支持长实例名并区分下划线与连字符；`start` 通过 RustFS `resource-init` 幂等创建。
 - `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY`：应用 settings 中保存的专用凭证，由 RustFS `resource-init` 创建；RustFS 管理员凭证只保存在 RustFS service settings，用于资源初始化。
 - `ENABLED_OPENAI` / `OPENAI_API_KEY` / `OPENAI_PROXY_URL` / `OPENAI_MODEL_LIST`：模型供应商配置，API Key 由使用者提供。
@@ -53,7 +53,7 @@
 ```bash
 cd deploy_apps/lobechat
 bash cli.sh init --name lobechat_main
-# Set S3_ENDPOINT in settings_lobechat.conf; init generates APP_URL and an initial sign-up address.
+# Remote access requires replacing the localhost APP_URL and S3_ENDPOINT defaults.
 # Add model-provider credentials when needed.
 bash cli.sh start
 ```
@@ -76,7 +76,7 @@ S3_ENDPOINT="https://s3.example.com"
 AUTH_ALLOWED_EMAILS="user@example.com"
 ```
 
-S3 反向代理应转发到生成的 `RUSTFS_PORT`，不是控制台端口。没有反向代理时，应用地址使用服务器地址和 `LOBECHAT_PORT`，S3 地址使用服务器地址和 `RUSTFS_PORT`。容器内部 S3 地址已经自动生成。
+S3 反向代理应转发到生成的 `RUSTFS_PORT`，不是控制台端口。本机访问使用 localhost 默认值；远程访问时，应用和 S3 地址都要使用浏览器可访问的服务器地址或域名。容器内部 S3 地址已经自动生成。
 
 多实例使用各自的配置文件和不同实例名，`--conf` 的父目录须预先存在：
 
@@ -92,15 +92,15 @@ bash cli.sh start --conf /srv/lobechat_b/settings_lobechat.conf
 
 #### init
 
-生成缺失 app settings，通过三个服务 CLI 的 `init --config-only` 准备 `settings_lobechat_paradedb.conf`、`settings_lobechat_redis.conf`、`settings_lobechat_rustfs.conf`，再调用服务 `render/env` 组合 YAML 并创建 data 目录。保留非空应用配置、密钥和 S3 专用凭证；`--app-url`、`--s3-endpoint`、`--auth-allowed-emails` 只补齐对应空字段，未填写的必要输入在输出中提示。初始化只生成本地文件和目录，不启动容器。
+生成缺失 app settings，通过三个服务 CLI 的 `init --config-only` 准备 `settings_lobechat_paradedb.conf`、`settings_lobechat_redis.conf`、`settings_lobechat_rustfs.conf`，再调用服务 `render/env` 组合 YAML 并创建 data 目录。保留非空应用配置、密钥和 S3 专用凭证；空的 `S3_ENDPOINT` 默认补为 `http://localhost:<RUSTFS_PORT>`，也可由 `--s3-endpoint` 覆盖。初始化只生成本地文件和目录，不启动容器。
 
 #### start
 
-检查必填字段和容器归属，由应用 hooks 生成缺失 JWKS，并调用 RustFS `prepare-data` 准备数据目录；先启动 PostgreSQL、Redis、RustFS，再调用 RustFS CLI 的 `resource-init` 创建本实例 Bucket、策略及专用凭证，最后启动 LobeHub。PostgreSQL 在空数据目录首次启动时创建数据库和账号，任一步失败立即返回错误。
+检查必填字段和容器归属，由应用 hooks 生成缺失 JWKS，并调用 RustFS `prepare-data` 准备数据目录。先启动 PostgreSQL、Redis、RustFS，再调用 RustFS CLI 的 `resource-init` 创建或补建本实例 Bucket、策略及专用凭证，最后启动 LobeHub。PostgreSQL 在空数据目录首次启动时创建数据库和账号，任一步失败立即返回错误。
 
 #### up
 
-依次执行 `init` 和 `start`，支持同样的三个初始化输入参数；首次配置的必填地址和邮箱须通过参数或 settings 提供。
+依次执行 `init` 和 `start`，支持同样的三个初始化输入参数；本机默认地址与初始注册邮箱由 `init` 生成。
 
 #### update
 

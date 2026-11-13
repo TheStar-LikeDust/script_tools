@@ -44,7 +44,7 @@ OPENAI_MODEL_LIST="gpt-4o-mini"
 REDIS_DATABASE="0"
 REDIS_PREFIX="{{INSTANCE_NAME}}"
 
-# Required before start: a browser-accessible URL for the RustFS S3 API.
+# Defaults to http://localhost:<RUSTFS_PORT>; set a browser-facing URL for remote access.
 S3_ENDPOINT=""
 # The startup hook asks RustFS to create this bucket and its dedicated credentials.
 S3_BUCKET="{{S3_BUCKET}}"

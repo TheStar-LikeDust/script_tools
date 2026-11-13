@@ -110,7 +110,7 @@ complete_settings() {
     local key value
     for key in IMAGE DOCKER_NETWORK LOBECHAT_PORT PARADEDB_CONF REDIS_CONF RUSTFS_CONF \
         REDIS_DATABASE REDIS_PREFIX S3_BUCKET S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY \
-        APP_URL S3_ENDPOINT AUTH_ALLOWED_EMAILS KEY_VAULTS_SECRET AUTH_SECRET; do
+        APP_URL AUTH_ALLOWED_EMAILS KEY_VAULTS_SECRET AUTH_SECRET; do
         [ -n "${!key:-}" ] && continue
         case "$key" in
             IMAGE) value="lobehub/lobehub:latest" ;;
@@ -125,7 +125,6 @@ complete_settings() {
             S3_ACCESS_KEY_ID) value="$(openssl rand -hex 10)" || return ;;
             S3_SECRET_ACCESS_KEY|KEY_VAULTS_SECRET|AUTH_SECRET) value="$(random_secret)" || return ;;
             APP_URL) value="${INIT_VALUES[APP_URL]-http://localhost:$LOBECHAT_PORT}" ;;
-            S3_ENDPOINT) value="${INIT_VALUES[S3_ENDPOINT]-}" ;;
             AUTH_ALLOWED_EMAILS)
                 value="${INIT_VALUES[AUTH_ALLOWED_EMAILS]-}"
                 [ -n "$value" ] || value="admin-$(openssl rand -hex 16)@example.invalid"
@@ -134,6 +133,13 @@ complete_settings() {
         save_setting "$key" "$value" || return
         printf -v "$key" '%s' "$value"
     done
+}
+
+complete_s3_endpoint() {
+    [ -n "$S3_ENDPOINT" ] && return 0
+    S3_ENDPOINT="${INIT_VALUES[S3_ENDPOINT]-}"
+    [ -n "$S3_ENDPOINT" ] || S3_ENDPOINT="http://localhost:$RUSTFS_PORT"
+    save_setting S3_ENDPOINT "$S3_ENDPOINT" || return
 }
 
 load_settings() {
@@ -242,6 +248,7 @@ do_init() {
     load_settings
     prepare_dependency_settings
     load_dependency_environment
+    complete_s3_endpoint
     render_compose
     mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data" \
         "$CONF_DIR/data/${PARADEDB_INSTANCE_NAME}_data" \
@@ -348,7 +355,7 @@ do_help() {
     echo "Usage: $0 {init|start|up|update|stop|rm|purge|reset|network [ls]} [--conf PATH] [options]"
     echo "  init    : Prepare app and service settings, render dependency fragments and create data dirs"
     echo "  start   : Start PostgreSQL, Redis and RustFS, initialize S3 resources, then start LobeHub"
-    echo "  up      : init + start (S3_ENDPOINT must be set; APP_URL and AUTH_ALLOWED_EMAILS get defaults)"
+    echo "  up      : init + start (APP_URL and S3_ENDPOINT get localhost defaults)"
     echo "  update  : Pull all configured images, initialize missing S3 resources and apply the stack"
     echo "  stop    : Stop this entire LobeHub stack"
     echo "  rm      : Remove this stack's containers/private network; preserve settings and data"
