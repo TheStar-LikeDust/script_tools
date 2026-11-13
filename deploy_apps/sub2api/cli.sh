@@ -123,8 +123,8 @@ complete_settings() {
         case "$key" in
             IMAGE) value="weishaw/sub2api:latest" ;;
             SUB2API_PORT) value="$(random_port)" ;;
-            PARADEDB_CONF) value="settings_paradedb.conf" ;;
-            REDIS_CONF) value="settings_redis.conf" ;;
+            PARADEDB_CONF) value="settings_sub2api_paradedb.conf" ;;
+            REDIS_CONF) value="settings_sub2api_redis.conf" ;;
             TZ) value=Asia/Shanghai ;;
             SERVER_MODE) value=release ;;
             RUN_MODE) value=standard ;;

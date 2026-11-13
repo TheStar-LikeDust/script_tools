@@ -9,8 +9,8 @@ DOCKER_NETWORK=""
 TZ="Asia/Shanghai"
 
 # Dependency settings are generated beside this file by init.
-PARADEDB_CONF="settings_paradedb.conf"
-REDIS_CONF="settings_redis.conf"
+PARADEDB_CONF="settings_sub2api_paradedb.conf"
+REDIS_CONF="settings_sub2api_redis.conf"
 
 # Server runtime
 SERVER_MODE="release"

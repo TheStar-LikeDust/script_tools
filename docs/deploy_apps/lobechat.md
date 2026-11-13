@@ -4,7 +4,7 @@
 
 > LobeHub 是 AI 对话与知识库应用。本目录使用一个 Docker Compose 项目部署应用及配套 PostgreSQL、Redis、RustFS。
 
-`init` 通过 ParadeDB、Redis、RustFS 的服务 CLI 准备依赖 settings 并组合 Compose 定义；填写应用地址、浏览器访问的 S3 地址及真实注册邮箱后，`start` 先启动依赖、调用 RustFS 初始化专属 Bucket 和凭证，再启动 LobeHub。默认使用本实例的配套依赖，外接依赖切换不属于当前流程。
+`init` 通过 ParadeDB、Redis、RustFS 的服务 CLI 准备依赖 settings 并组合 Compose 定义；应用地址默认使用 `http://localhost:<LOBECHAT_PORT>`，初始注册邮箱默认随机生成，浏览器可访问的 S3 地址仍需填写。`start` 先启动依赖、调用 RustFS 初始化专属 Bucket 和凭证，再启动 LobeHub。默认使用本实例的配套依赖，外接依赖切换不属于当前流程。
 
 ## 2. 核心配置项
 
@@ -12,14 +12,14 @@
 
 - `INSTANCE_NAME`：Compose 项目名及应用容器名，须符合 `[a-z0-9][a-z0-9_-]*`。配套容器使用 `_postgres`、`_redis`、`_rustfs` 后缀。
 - `IMAGE`：应用镜像，默认 `lobehub/lobehub:latest`。
-- `PARADEDB_CONF` / `REDIS_CONF` / `RUSTFS_CONF`：依赖 settings 路径，相对路径以应用配置文件目录为基准；默认分别为 `settings_paradedb.conf`、`settings_redis.conf`、`settings_rustfs.conf`。
+- `PARADEDB_CONF` / `REDIS_CONF` / `RUSTFS_CONF`：依赖 settings 路径，相对路径以应用配置文件目录为基准；默认分别为 `settings_lobechat_paradedb.conf`、`settings_lobechat_redis.conf`、`settings_lobechat_rustfs.conf`。
 - `LOBECHAT_PORT`：随机生成的应用宿主机端口，映射容器内 `3210`。
 - `DOCKER_NETWORK`：默认留空，由 Compose 创建本实例私有网络；指定名称时接入已经存在的共享网络。
 - PostgreSQL：ParadeDB 服务 settings 保存镜像、实例名、数据库账号和密码；应用调用其 `env` 生成内部 DSN，使用容器端口 `5432`，不发布宿主机端口。
-- `APP_URL`：必填的浏览器访问地址，例如 HTTPS 反向代理后的应用地址；可由 `init/up --app-url URL` 注入，未提供时留空。
+- `APP_URL`：浏览器访问地址；默认生成 `http://localhost:<LOBECHAT_PORT>`，远程访问时应改成浏览器可访问的地址，也可由 `init/up --app-url URL` 注入。
 - `KEY_VAULTS_SECRET` / `AUTH_SECRET`：`init` 生成的应用密钥，后续初始化保留原值。
 - `JWKS_KEY`：缺失时在 `start/update` 生成并保存，优先使用宿主机 Node.js，否则使用一次性应用容器；`init` 不启动容器。
-- `AUTH_ALLOWED_EMAILS`：必填的真实注册邮箱或域名允许列表，可由 `init/up --auth-allowed-emails LIST` 注入；未提供时留空，不生成占位邮箱。
+- `AUTH_ALLOWED_EMAILS`：允许注册的邮箱或域名列表；默认生成并保存随机地址 `admin-<随机值>@example.invalid`，用于初始注册且不接收邮件。确认初始账号建立后，可按需要改成实际允许注册的邮箱或域名，也可由 `init/up --auth-allowed-emails LIST` 注入。
 - `REDIS_DATABASE` / `REDIS_PREFIX`：默认逻辑库 `0`、实例名作为前缀；Redis CLI 生成连接 URL。配套 Redis 无密码、不发布宿主机端口。逻辑库和前缀用于区分数据，不提供账号权限隔离。
 - RustFS：`RUSTFS_CONF` 指向服务 settings；服务生成的 S3 API 和控制台宿主机端口分别映射容器端口 `9000`、`9001`。
 - `S3_ENDPOINT`：必填、浏览器与应用容器都可访问的 S3 API 地址，例如 `https://s3.example.com` 或服务器地址加 `RUSTFS_PORT`；可由 `init/up --s3-endpoint URL` 注入，未提供时留空。
@@ -33,7 +33,7 @@
 
 `init` 分别调用 ParadeDB、Redis、RustFS 的 `init --config-only`，再通过各服务 `render/env` 生成应用总 Compose YAML。服务 settings 只由对应服务 CLI 管理，不会整体 source 到应用变量。生成 YAML 保存变量引用，持久调整 LobeHub 定义应修改 `templates/compose.yaml.tpl`。
 
-初始化输入的优先级为已有非空配置、对应参数、默认值或留空。重复 `init` 不用新参数覆盖已经保存的地址、邮箱或凭证；需修改已有值时直接编辑 settings。
+初始化输入的优先级为已有非空配置、对应参数、默认值或留空。重复 `init` 不用新参数覆盖已经保存的地址、邮箱或凭证；需修改已有值时直接编辑 settings。已有配置中的依赖路径不会自动迁移，旧实例需手动重命名依赖文件并更新对应路径。
 
 ## 3. 备注
 
@@ -53,7 +53,7 @@
 ```bash
 cd deploy_apps/lobechat
 bash cli.sh init --name lobechat_main
-# Fill APP_URL, S3_ENDPOINT and AUTH_ALLOWED_EMAILS in settings_lobechat.conf.
+# Set S3_ENDPOINT in settings_lobechat.conf; init generates APP_URL and an initial sign-up address.
 # Add model-provider credentials when needed.
 bash cli.sh start
 ```
@@ -92,7 +92,7 @@ bash cli.sh start --conf /srv/lobechat_b/settings_lobechat.conf
 
 #### init
 
-生成缺失 app settings，通过三个服务 CLI 的 `init --config-only` 准备 ParadeDB、Redis、RustFS settings，再调用服务 `render/env` 组合 YAML 并创建 data 目录。保留非空应用配置、密钥和 S3 专用凭证；`--app-url`、`--s3-endpoint`、`--auth-allowed-emails` 只补齐对应空字段，未填写的必要输入在输出中提示。初始化只生成本地文件和目录，不启动容器。
+生成缺失 app settings，通过三个服务 CLI 的 `init --config-only` 准备 `settings_lobechat_paradedb.conf`、`settings_lobechat_redis.conf`、`settings_lobechat_rustfs.conf`，再调用服务 `render/env` 组合 YAML 并创建 data 目录。保留非空应用配置、密钥和 S3 专用凭证；`--app-url`、`--s3-endpoint`、`--auth-allowed-emails` 只补齐对应空字段，未填写的必要输入在输出中提示。初始化只生成本地文件和目录，不启动容器。
 
 #### start
 

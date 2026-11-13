@@ -18,21 +18,21 @@
 - `CRYPTO_SECRET`：应用加密密钥；首次启动后必须随应用数据备份。
 - `NEWAPI_ADMIN_USERNAME`、`NEWAPI_ADMIN_PASSWORD`：`init` 生成的初始管理员凭证，供启动 hook 使用。
 
-### settings_paradedb.conf
+### settings_newapi_paradedb.conf
 
 由 ParadeDB 服务 CLI 维护。数据库镜像、容器名、数据库名、账号、密码和端口只保存在该文件；New API 通过服务的 `env` 获取 `PARADEDB_DSN`，不重复保存数据库密码。
 
-### settings_redis.conf
+### settings_newapi_redis.conf
 
 由 Redis 服务 CLI 维护。Redis 默认无认证，New API 通过服务的 `env --db 0` 获取 `REDIS_URL`；逻辑库编号只区分数据，不提供权限隔离。
 
 ## 3. 备注
 
-- `init` 默认在应用 settings 同目录生成 `settings_paradedb.conf` 和 `settings_redis.conf`，并以 `${INSTANCE_NAME}_postgres`、`${INSTANCE_NAME}_redis` 作为容器名。
+- `init` 默认在应用 settings 同目录生成 `settings_newapi_paradedb.conf` 和 `settings_newapi_redis.conf`，并以 `${INSTANCE_NAME}_postgres`、`${INSTANCE_NAME}_redis` 作为容器名。
 - 依赖服务的 `init --config-only` 只准备配置；服务片段的镜像、挂载、健康检查和凭证引用来自服务自身模板。
 - New API 的总 YAML 由 `hooks.sh` 组合：ParadeDB `render --service-name postgres`、Redis `render --service-name redis` 和本目录应用片段。应用只使用 `PARADEDB_*`、`REDIS_*` 与 `NEWAPI_*` 环境变量。
 - 数据库 DSN 使用 ParadeDB 服务生成的容器地址和内部端口 `5432`；Redis URL 使用 Redis 服务生成的容器地址和内部端口 `6379`。宿主机映射端口不用于容器间连接。
-- 本次不迁移旧版 `settings_newapi.conf` 中的依赖字段或旧数据目录。已有旧部署需按新流程重新初始化，旧文件不会被 CLI 自动删除。
+- 新生成的应用配置使用 `settings_newapi_paradedb.conf` 和 `settings_newapi_redis.conf`。已有 `settings_newapi.conf` 中的非空依赖路径和旧数据目录不会自动迁移；需要手动重命名依赖文件并更新 `PARADEDB_CONF`、`REDIS_CONF`。`reset` 只清理应用配置目录内明确引用的默认依赖文件，外部配置保留。
 - `init`、`start`、`update` 使用明确的 settings 路径，不扫描或选择其他实例的配置和容器。组合后的容器由 New API Compose 项目统一管理。
 - 首次管理员初始化要求宿主机有 `curl` 且 `NEWAPI_PUBLISH_PORT=true`。hook 等待 `/api/status` 后向 `/api/setup` 提交自用模式请求；成功标记写入应用数据目录，重复 `start` 跳过。
 
@@ -55,7 +55,7 @@ bash cli.sh init --conf /srv/newapi-main/settings_newapi.conf --name newapi_main
 bash cli.sh start --conf /srv/newapi-main/settings_newapi.conf
 ```
 
-默认生成的配置文件为 `/srv/newapi-main/settings_newapi.conf`、`settings_paradedb.conf` 和 `settings_redis.conf`，生成 YAML 和三个数据目录也位于该目录。
+默认生成的配置文件为 `/srv/newapi-main/settings_newapi.conf`、`settings_newapi_paradedb.conf` 和 `settings_newapi_redis.conf`，生成 YAML 和三个数据目录也位于该目录。
 
 ## 5. 命令解释
 

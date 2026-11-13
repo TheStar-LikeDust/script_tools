@@ -38,7 +38,7 @@ bash cli.sh start
 
 New API 的 `init` 会通过 `deploy_services/paradedb` 和 `deploy_services/redis` 准备三份 settings，并由服务接口生成数据库 DSN 和 Redis URL。PostgreSQL 首次启动时创建配置指定的数据库及账号；Redis 默认无密码，数据持久化。数据库和 Redis 使用容器端口 `5432`、`6379`，不发布宿主机端口。Compose 自动创建本实例私有网络，无需先启动 `deploy_services/` 中的服务。
 
-LobeHub 的 `APP_URL`、浏览器和容器均可访问的 `S3_ENDPOINT`、真实 `AUTH_ALLOWED_EMAILS` 可通过 `init --app-url --s3-endpoint --auth-allowed-emails` 传入，也可在应用 settings 中填写。启动阶段调用 RustFS `resource-init` 创建专用用户、Bucket 和访问策略；管理员凭证由 RustFS settings 保存。CORS 暂不自动配置，模型 API Key、OAuth 等外部凭证由使用者提供。
+LobeHub 的 `APP_URL` 默认使用 `http://localhost:<LOBECHAT_PORT>`，初始 `AUTH_ALLOWED_EMAILS` 默认生成随机的 `admin-<随机值>@example.invalid`；可通过 `init --app-url --s3-endpoint --auth-allowed-emails` 覆盖，也可在应用 settings 中修改。`S3_ENDPOINT` 必须是浏览器和容器均可访问的地址。启动阶段调用 RustFS `resource-init` 创建专用用户、Bucket 和访问策略；管理员凭证由 RustFS settings 保存。CORS 暂不自动配置，模型 API Key、OAuth 等外部凭证由使用者提供。
 
 四个应用先生成或读取应用与依赖的全部 settings，再组合 YAML。应用只保存自身字段、依赖配置路径及需要的专用 S3 凭证，数据库账号和密码保存在 ParadeDB settings，连接串由服务生成。settings 是 Bash 配置；外接依赖切换不属于当前自动化流程。旧版单配置及旧数据不做自动迁移。
 

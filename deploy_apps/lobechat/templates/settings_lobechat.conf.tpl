@@ -4,14 +4,14 @@ LOBECHAT_PORT="{{LOBECHAT_PORT}}"
 IMAGE="lobehub/lobehub:latest"
 
 # Relative paths resolve beside this file.
-PARADEDB_CONF="settings_paradedb.conf"
-REDIS_CONF="settings_redis.conf"
-RUSTFS_CONF="settings_rustfs.conf"
+PARADEDB_CONF="settings_lobechat_paradedb.conf"
+REDIS_CONF="settings_lobechat_redis.conf"
+RUSTFS_CONF="settings_lobechat_rustfs.conf"
 
 # Existing shared Docker network, or empty for a private Compose network.
 DOCKER_NETWORK=""
 
-# Required before start: the browser-facing application URL.
+# Defaults to http://localhost:<LOBECHAT_PORT>; set a browser-facing URL for remote access.
 APP_URL=""
 
 # Generated once. Keep these with your database backups.
@@ -21,7 +21,7 @@ AUTH_SECRET='{{AUTH_SECRET}}'
 JWKS_KEY=''
 
 # Built-in email/password login, without SMTP or email verification.
-# Required before start: a real email or domain allowed to register.
+# Generated once for initial registration; replace with a real email or domain as needed.
 AUTH_ALLOWED_EMAILS=""
 
 # Optional Composio integration.

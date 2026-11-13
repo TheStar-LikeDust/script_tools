@@ -2,7 +2,7 @@
 # Casdoor-specific dependency composition and app.conf rendering.
 
 resolve_dependency_conf() {
-    local dependency_path="${PARADEDB_CONF:-settings_paradedb.conf}" dependency_dir
+    local dependency_path="${PARADEDB_CONF:-settings_casdoor_paradedb.conf}" dependency_dir
     if [[ "$dependency_path" = /* ]]; then
         dependency_dir="$(cd "$(dirname "$dependency_path")" && pwd)"
     else

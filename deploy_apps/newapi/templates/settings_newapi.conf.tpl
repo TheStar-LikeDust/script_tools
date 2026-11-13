@@ -10,8 +10,8 @@ TZ="Asia/Shanghai"
 ERROR_LOG_ENABLED="true"
 
 # Explicit dependency settings paths. Relative paths resolve beside this file.
-PARADEDB_CONF="settings_paradedb.conf"
-REDIS_CONF="settings_redis.conf"
+PARADEDB_CONF="settings_newapi_paradedb.conf"
+REDIS_CONF="settings_newapi_redis.conf"
 
 # Initial administrator credentials. Init fills empty values; start uses hooks.sh.
 # These values do not change an existing administrator's login credentials.

@@ -98,8 +98,8 @@ complete_settings() {
             TZ) value="Asia/Shanghai" ;;
             ERROR_LOG_ENABLED) value=true ;;
             CRYPTO_SECRET) value="$(random_secret)" ;;
-            PARADEDB_CONF) value="settings_paradedb.conf" ;;
-            REDIS_CONF) value="settings_redis.conf" ;;
+            PARADEDB_CONF) value="settings_newapi_paradedb.conf" ;;
+            REDIS_CONF) value="settings_newapi_redis.conf" ;;
         esac
         printf -v "$key" '%s' "$value"
         missing_keys+=("$key")
@@ -268,7 +268,8 @@ do_reset() {
     local dependency_conf
     for dependency_conf in "$(resolve_dependency_conf paradedb)" "$(resolve_dependency_conf redis)"; do
         case "$dependency_conf" in
-            "$CONF_DIR/settings_paradedb.conf"|"$CONF_DIR/settings_redis.conf") rm -f -- "$dependency_conf" ;;
+            "$CONF_DIR/settings_paradedb.conf"|"$CONF_DIR/settings_redis.conf"|\
+            "$CONF_DIR/settings_newapi_paradedb.conf"|"$CONF_DIR/settings_newapi_redis.conf") rm -f -- "$dependency_conf" ;;
         esac
     done
     echo "[SUCCESS] New API stack, dependency data, default settings and generated YAML were removed."

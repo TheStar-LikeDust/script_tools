@@ -17,7 +17,7 @@
 - 源文件（纳入版本管理）：`cli.sh`、有实际用途的 `hooks.sh`、`templates/*.tpl`、该服务的说明文档。
 - 生成物（不提交，由 `.gitignore` 忽略）：`settings_<服务名>.conf`、`<服务名>.compose.yaml`、应用生成的附属配置、各服务的 `data/`。
 
-实例配置统一命名为 `settings_<服务名>.conf`，模板为 `templates/settings_<服务名>.conf.tpl`。应用与依赖配置分开保存：Casdoor 共两份，New API、Sub2API 共三份，LobeHub 共四份。应用记录 `PARADEDB_CONF`、`REDIS_CONF`、`RUSTFS_CONF` 中实际需要的路径，并通过服务接口获取连接信息。
+独立服务配置命名为 `settings_<服务名>.conf`，应用主配置命名为 `settings_<应用名>.conf`，模板为 `templates/settings_<应用名>.conf.tpl`。应用配套依赖配置命名为 `settings_<应用名>_<服务名>.conf`，例如 New API 的 `settings_newapi_paradedb.conf`；独立部署 ParadeDB 时仍使用 `settings_paradedb.conf`。应用与依赖配置分开保存：Casdoor 共两份，New API、Sub2API 共三份，LobeHub 共四份。应用记录 `PARADEDB_CONF`、`REDIS_CONF`、`RUSTFS_CONF` 中实际需要的路径，并通过服务接口获取连接信息。
 
 `settings_<服务名>.conf` 含随机密钥/密码，属于本地资产：既不提交，也不会被 `purge` 删除；迁移时与 `data/` 一起打包。
 
@@ -54,7 +54,7 @@
 
 数据库字段统一由 ParadeDB settings 维护；应用消费 DSN 或将服务导出字段映射到自身环境变量。`POSTGRES_DB/POSTGRES_USER/POSTGRES_PASSWORD` 只初始化空数据目录，修改配置不会重置已有数据库密码。应用镜像负责业务表和迁移。Redis 默认无认证，不生成密码，逻辑库和键前缀不提供权限隔离。
 
-LobeHub 的 `APP_URL`、浏览器和容器均可访问的 `S3_ENDPOINT`、真实 `AUTH_ALLOWED_EMAILS` 可由初始化参数或 settings 提供；启动时检查缺项。内部 S3 地址由 RustFS 服务导出，应用 settings 保存专用 S3 凭证，管理员凭证只保存在服务配置中。Bucket、用户和策略在启动阶段创建，CORS 暂留待处理。模型和 OAuth 等外部凭证不生成占位值。
+LobeHub 的 `APP_URL` 默认由 `LOBECHAT_PORT` 生成 localhost 地址，初始 `AUTH_ALLOWED_EMAILS` 默认生成随机的 `.invalid` 邮箱；两者可由初始化参数或 settings 覆盖。浏览器和容器均可访问的 `S3_ENDPOINT` 仍须提供，启动时检查缺项。内部 S3 地址由 RustFS 服务导出，应用 settings 保存专用 S3 凭证，管理员凭证只保存在服务配置中。Bucket、用户和策略在启动阶段创建，CORS 暂留待处理。模型和 OAuth 等外部凭证不生成占位值。
 
 ## 5. 实例命名与多开隔离 (INSTANCE_NAME)
 
@@ -96,5 +96,5 @@ LobeHub 的 `APP_URL`、浏览器和容器均可访问的 `S3_ENDPOINT`、真实
 有意例外：
 
 - 由应用本体创建或交互设置的管理员（如 Casdoor）按应用自身流程管理。
-- LobeHub 通过注册流程创建用户，`AUTH_ALLOWED_EMAILS` 留空提示填写真实邮箱或域名；缺失 JWKS 在 `start/update` 生成一次并保存。
+- LobeHub 通过注册流程创建用户，`AUTH_ALLOWED_EMAILS` 默认生成随机 `.invalid` 地址用于初始注册；缺失 JWKS 在 `start/update` 生成一次并保存。
 - 独立 ParadeDB 默认管理员名为 `postgres`；配套 PostgreSQL 的账号与密码由服务 settings 维护。RustFS 服务 settings 保存管理凭证，LobeHub 使用仅访问自身 Bucket 的专用用户；不扩展共享 Redis ACL 或外接依赖管理。

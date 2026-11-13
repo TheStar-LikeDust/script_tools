@@ -65,7 +65,7 @@ complete_settings() {
         case "$key" in
             IMAGE) value="casbin/casdoor:latest" ;;
             CASDOOR_PORT) value=$(random_port) ;;
-            PARADEDB_CONF) value="settings_paradedb.conf" ;;
+            PARADEDB_CONF) value="settings_casdoor_paradedb.conf" ;;
         esac
         save_setting "$key" "$value"
         printf -v "$key" '%s' "$value"
@@ -230,7 +230,9 @@ do_reset() {
     dependency_compose_basename="${dependency_conf##*/}"
     dependency_compose_basename="${dependency_compose_basename#settings_}"
     case "$dependency_conf" in
-        "$CONF_DIR"/*) rm -f -- "$dependency_conf" "${dependency_conf%/*}/${dependency_compose_basename%.conf}.compose.yaml" ;;
+        "$CONF_DIR/settings_paradedb.conf"|"$CONF_DIR/settings_casdoor_paradedb.conf")
+            rm -f -- "$dependency_conf" "${dependency_conf%/*}/${dependency_compose_basename%.conf}.compose.yaml"
+            ;;
     esac
     rm -rf -- "$CONF_DIR/data/${INSTANCE_NAME}_config"
     echo "[SUCCESS] [Casdoor] This instance's stack, persistent data and generated configuration were removed."

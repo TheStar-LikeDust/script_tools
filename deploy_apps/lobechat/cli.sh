@@ -116,15 +116,20 @@ complete_settings() {
             IMAGE) value="lobehub/lobehub:latest" ;;
             DOCKER_NETWORK) value="" ;;
             LOBECHAT_PORT) value="$(random_port)" || return ;;
-            PARADEDB_CONF) value="settings_paradedb.conf" ;;
-            REDIS_CONF) value="settings_redis.conf" ;;
-            RUSTFS_CONF) value="settings_rustfs.conf" ;;
+            PARADEDB_CONF) value="settings_lobechat_paradedb.conf" ;;
+            REDIS_CONF) value="settings_lobechat_redis.conf" ;;
+            RUSTFS_CONF) value="settings_lobechat_rustfs.conf" ;;
             REDIS_DATABASE) value=0 ;;
             REDIS_PREFIX) value="$INSTANCE_NAME" ;;
             S3_BUCKET) value="$(default_bucket_name "$INSTANCE_NAME")" || return ;;
             S3_ACCESS_KEY_ID) value="$(openssl rand -hex 10)" || return ;;
             S3_SECRET_ACCESS_KEY|KEY_VAULTS_SECRET|AUTH_SECRET) value="$(random_secret)" || return ;;
-            APP_URL|S3_ENDPOINT|AUTH_ALLOWED_EMAILS) value="${INIT_VALUES[$key]-}" ;;
+            APP_URL) value="${INIT_VALUES[APP_URL]-http://localhost:$LOBECHAT_PORT}" ;;
+            S3_ENDPOINT) value="${INIT_VALUES[S3_ENDPOINT]-}" ;;
+            AUTH_ALLOWED_EMAILS)
+                value="${INIT_VALUES[AUTH_ALLOWED_EMAILS]-}"
+                [ -n "$value" ] || value="admin-$(openssl rand -hex 16)@example.invalid"
+                ;;
         esac
         save_setting "$key" "$value" || return
         printf -v "$key" '%s' "$value"
@@ -249,7 +254,7 @@ do_init() {
         "$(resolve_dependency_conf rustfs)" "$COMPOSE_FILE"
     printf '  App URL:   %s\n  S3 URL:    %s\n  Sign-up:   %s\n' \
         "${APP_URL:-set APP_URL before start}" "${S3_ENDPOINT:-set S3_ENDPOINT before start}" \
-        "${AUTH_ALLOWED_EMAILS:-set a real AUTH_ALLOWED_EMAILS value before start}"
+        "${AUTH_ALLOWED_EMAILS:-set AUTH_ALLOWED_EMAILS before start}"
     printf '  App port:  %s\n  S3 port:   %s\n  Console:   %s\n\n' \
         "$LOBECHAT_PORT" "$RUSTFS_PORT" "$RUSTFS_ADMIN_PORT"
     printf '  S3 bucket: %s\n  Existing nonempty settings and keys were preserved.\n' "$S3_BUCKET"
@@ -343,7 +348,7 @@ do_help() {
     echo "Usage: $0 {init|start|up|update|stop|rm|purge|reset|network [ls]} [--conf PATH] [options]"
     echo "  init    : Prepare app and service settings, render dependency fragments and create data dirs"
     echo "  start   : Start PostgreSQL, Redis and RustFS, initialize S3 resources, then start LobeHub"
-    echo "  up      : init + start (APP_URL, S3_ENDPOINT and AUTH_ALLOWED_EMAILS must be set)"
+    echo "  up      : init + start (S3_ENDPOINT must be set; APP_URL and AUTH_ALLOWED_EMAILS get defaults)"
     echo "  update  : Pull all configured images, initialize missing S3 resources and apply the stack"
     echo "  stop    : Stop this entire LobeHub stack"
     echo "  rm      : Remove this stack's containers/private network; preserve settings and data"

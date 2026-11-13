@@ -8,4 +8,4 @@ DOCKER_NETWORK=""
 
 # ParadeDB CLI owns database settings, credentials and the generated DSN.
 # Relative paths resolve beside this app settings file.
-PARADEDB_CONF="settings_paradedb.conf"
+PARADEDB_CONF="settings_casdoor_paradedb.conf"

@@ -10,7 +10,7 @@
 - Compose 生命周期：Compose 声明容器、网络、端口、环境变量和相对路径 bind mount；cli.sh 生成配置并调用 Compose。
 - 职责分层 (Separation by File)：cli.sh 负责配置初始化、随机密钥生成及专属操作的调用；Compose 管理容器生命周期。服务专属的片段渲染、连接串生成、等待与初始化请求放在 hooks.sh，不级联启停或清理共享基础服务。
 - 配套依赖：Casdoor、LobeHub、New API、Sub2API 均通过基础服务的配置、环境导出与片段接口组合自己的 Compose 项目。应用管理整套实例，独立部署的基础服务仍由其自身 CLI 管理。
-- 配置与数据分离：脚本本身无状态，运行期配置落盘到 settings_<服务名>.conf，应用及配套数据库、缓存、对象存储数据持久化到配置目录下的 data。外部资源另行管理。
+- 配置与数据分离：脚本本身无状态，独立服务配置落盘到 `settings_<服务名>.conf`，应用主配置落盘到 `settings_<应用名>.conf`，应用配套依赖配置使用 `settings_<应用名>_<服务名>.conf`，应用及配套数据库、缓存、对象存储数据持久化到配置目录下的 `data/`。外部资源另行管理。
 
 ## 2. 文件分层与职责
 
@@ -160,7 +160,7 @@ New API 的 `init` 生成并保存缺失的管理员凭证；`start` 在 `compos
 
 日常生命周期命令按以下语义实现。Compose 管理的容器定义有变化时，重复运行 `start` 或 `up` 会应用新配置，无需先 `rm`。
 
-- init：只生成本地配置、YAML 和目录。三个基础服务均支持参数注入及 `--config-only`；应用准备完全部 settings 后才组合总 YAML。LobeHub 的地址、S3 地址和真实邮箱可经初始化参数提供，缺项时提示填写。
+- init：只生成本地配置、YAML 和目录。三个基础服务均支持参数注入及 `--config-only`；应用准备完全部 settings 后才组合总 YAML。LobeHub 默认生成 localhost 应用地址和随机 `.invalid` 初始注册邮箱；S3 地址可经初始化参数提供，缺项时提示填写。
 - start：读取 settings、刷新 YAML 并执行 `docker compose up -d`，启动整套实例；New API 首次启动还执行管理员初始化 hook，已有标记时跳过。其他启动场景返回后查看应用日志或健康状态判断是否就绪。
 - up：一键组合，等价于 `init` 加 `start`。
 - update：拉取本项目应用及配套服务的镜像，再执行 `docker compose up -d`，保留配置、凭证和数据。
