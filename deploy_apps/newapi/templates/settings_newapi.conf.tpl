@@ -1,29 +1,22 @@
-# New API Settings
-
-# === New API ===
+# New API settings. PostgreSQL and Redis settings are separate service files.
 INSTANCE_NAME="{{INSTANCE_NAME}}"
 IMAGE="calciumion/new-api:latest"
+
 # Empty uses this instance's private Compose network.
 DOCKER_NETWORK=""
 NEWAPI_PORT="{{NEWAPI_PORT}}"
 NEWAPI_PUBLISH_PORT="true"
 TZ="Asia/Shanghai"
-
-# Bundled PostgreSQL. Its database and account are created on first start.
-POSTGRES_IMAGE="paradedb/paradedb:latest-pg17"
-DB_HOST="{{INSTANCE_NAME}}_postgres"
-DB_PORT="5432"
-DB_NAME="newapi"
-DB_USER="newapi"
-DB_PASSWORD=''
-DB_SSLMODE="disable"
-
-# Bundled Redis has no authentication and no published host port.
-REDIS_IMAGE="redis:7-alpine"
-REDIS_CONN_STRING='redis://{{INSTANCE_NAME}}_redis:6379/0'
-
-# Record and show error logs in the web console
 ERROR_LOG_ENABLED="true"
+
+# Explicit dependency settings paths. Relative paths resolve beside this file.
+PARADEDB_CONF="settings_paradedb.conf"
+REDIS_CONF="settings_redis.conf"
+
+# Initial administrator credentials. Init fills empty values; start uses hooks.sh.
+# These values do not change an existing administrator's login credentials.
+NEWAPI_ADMIN_USERNAME=''
+NEWAPI_ADMIN_PASSWORD=''
 
 # Encrypts sensitive DB content (e.g. channel keys). NEVER change after first
 # start: already-encrypted data cannot be decrypted with a new secret.

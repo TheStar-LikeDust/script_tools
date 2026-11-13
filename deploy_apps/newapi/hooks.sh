@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+# New API dependency composition and administrator setup.
+
+resolve_dependency_conf() {
+    local dependency_name="$1" dependency_path
+    case "$dependency_name" in
+        paradedb) dependency_path="$PARADEDB_CONF" ;;
+        redis) dependency_path="$REDIS_CONF" ;;
+        *)
+            echo "[ERROR] Unknown dependency: $dependency_name" >&2
+            return 1
+            ;;
+    esac
+    if [[ "$dependency_path" = /* ]]; then
+        printf '%s' "$dependency_path"
+    else
+        printf '%s/%s' "$CONF_DIR" "$dependency_path"
+    fi
+}
+
+service_cli_path() {
+    case "$1" in
+        paradedb) printf '%s/../../deploy_services/paradedb/cli.sh' "$SCRIPT_DIR" ;;
+        redis) printf '%s/../../deploy_services/redis/cli.sh' "$SCRIPT_DIR" ;;
+        *)
+            echo "[ERROR] Unknown dependency: $1" >&2
+            return 1
+            ;;
+    esac
+}
+
+require_dependency_settings() {
+    local dependency_name dependency_conf dependency_cli
+    for dependency_name in paradedb redis; do
+        dependency_conf="$(resolve_dependency_conf "$dependency_name")"
+        dependency_cli="$(service_cli_path "$dependency_name")"
+        if [ ! -f "$dependency_conf" ]; then
+            echo "[ERROR] $dependency_name settings not found: $dependency_conf. Run init with the same --conf first." >&2
+            return 1
+        fi
+        if [ ! -f "$dependency_cli" ]; then
+            echo "[ERROR] $dependency_name CLI not found: $dependency_cli" >&2
+            return 1
+        fi
+    done
+}
+
+prepare_dependency_settings() {
+    local dependency_conf dependency_cli
+    local -a paradedb_args redis_args
+
+    dependency_conf="$(resolve_dependency_conf paradedb)"
+    dependency_cli="$(service_cli_path paradedb)"
+    paradedb_args=(
+        init
+        --conf "$dependency_conf"
+        --name "${INSTANCE_NAME}_postgres"
+        --publish-port false
+        --db-name newapi
+        --db-user newapi
+        --config-only
+    )
+    if [ -n "$DOCKER_NETWORK" ]; then
+        paradedb_args+=(--network "$DOCKER_NETWORK")
+    fi
+    if ! bash "$dependency_cli" "${paradedb_args[@]}" >/dev/null; then
+        echo "[ERROR] Could not prepare ParadeDB settings: $dependency_conf" >&2
+        return 1
+    fi
+
+    dependency_conf="$(resolve_dependency_conf redis)"
+    dependency_cli="$(service_cli_path redis)"
+    redis_args=(
+        init
+        --conf "$dependency_conf"
+        --name "${INSTANCE_NAME}_redis"
+        --publish-port false
+        --config-only
+    )
+    if [ -n "$DOCKER_NETWORK" ]; then
+        redis_args+=(--network "$DOCKER_NETWORK")
+    fi
+    if ! bash "$dependency_cli" "${redis_args[@]}" >/dev/null; then
+        echo "[ERROR] Could not prepare Redis settings: $dependency_conf" >&2
+        return 1
+    fi
+}
+
+load_dependency_environment() {
+    require_dependency_settings
+
+    local dependency_conf dependency_cli environment_output
+    dependency_conf="$(resolve_dependency_conf paradedb)"
+    dependency_cli="$(service_cli_path paradedb)"
+    if ! environment_output="$(bash "$dependency_cli" env --conf "$dependency_conf")"; then
+        echo "[ERROR] Could not load ParadeDB environment: $dependency_conf" >&2
+        return 1
+    fi
+    eval "$environment_output"
+
+    dependency_conf="$(resolve_dependency_conf redis)"
+    dependency_cli="$(service_cli_path redis)"
+    if ! environment_output="$(bash "$dependency_cli" env --conf "$dependency_conf" --db 0)"; then
+        echo "[ERROR] Could not load Redis environment: $dependency_conf" >&2
+        return 1
+    fi
+    eval "$environment_output"
+
+    SQL_DSN="$PARADEDB_DSN"
+    REDIS_CONN_STRING="$REDIS_URL"
+    export SQL_DSN REDIS_CONN_STRING
+}
+
+export_app_compose_environment() {
+    NEWAPI_INSTANCE_NAME="$INSTANCE_NAME"
+    NEWAPI_IMAGE="$IMAGE"
+    NEWAPI_DOCKER_NETWORK="$DOCKER_NETWORK"
+    NEWAPI_CRYPTO_SECRET="$CRYPTO_SECRET"
+    NEWAPI_TZ="$TZ"
+    NEWAPI_ERROR_LOG_ENABLED="$ERROR_LOG_ENABLED"
+    export NEWAPI_INSTANCE_NAME NEWAPI_IMAGE NEWAPI_PORT NEWAPI_PUBLISH_PORT \
+        NEWAPI_DOCKER_NETWORK NEWAPI_CRYPTO_SECRET \
+        NEWAPI_TZ NEWAPI_ERROR_LOG_ENABLED
+}
+
+render_compose() (
+    umask 077
+    local dependency_cli dependency_conf paradedb_service redis_service compose_tmp
+    dependency_cli="$(service_cli_path paradedb)"
+    dependency_conf="$(resolve_dependency_conf paradedb)"
+    if ! paradedb_service="$(bash "$dependency_cli" render --conf "$dependency_conf" --service-name postgres)"; then
+        echo "[ERROR] Could not render the ParadeDB service." >&2
+        return 1
+    fi
+
+    dependency_cli="$(service_cli_path redis)"
+    dependency_conf="$(resolve_dependency_conf redis)"
+    if ! redis_service="$(bash "$dependency_cli" render --conf "$dependency_conf" --service-name redis)"; then
+        echo "[ERROR] Could not render the Redis service." >&2
+        return 1
+    fi
+
+    compose_tmp="$(mktemp "${COMPOSE_FILE}.XXXXXX")"
+    trap 'rm -f -- "$compose_tmp"' EXIT
+    {
+        printf '# Generated by New API using app and deploy_services templates.\nservices:\n'
+        printf '%s\n' "$paradedb_service"
+        printf '%s\n' "$redis_service"
+        cat "$TPL_DIR/compose.yaml.tpl"
+        if [ "$NEWAPI_PUBLISH_PORT" = true ]; then
+            cat <<'YAML'
+    ports:
+      - "${NEWAPI_PORT:?NEWAPI_PORT is required}:3000"
+YAML
+        fi
+        if [ -n "$DOCKER_NETWORK" ]; then
+            cat <<'YAML'
+networks:
+  default:
+    external: true
+    name: "${NEWAPI_DOCKER_NETWORK}"
+YAML
+        fi
+    } > "$compose_tmp"
+    mv -- "$compose_tmp" "$COMPOSE_FILE"
+)
+
+json_string() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//$'\b'/\\b}"
+    value="${value//$'\f'/\\f}"
+    value="${value//$'\n'/\\n}"
+    value="${value//$'\r'/\\r}"
+    value="${value//$'\t'/\\t}"
+    printf '"%s"' "$value"
+}
+
+initialize_admin() {
+    local setup_marker="$CONF_DIR/data/${INSTANCE_NAME}_data/.admin_initialized"
+    if [ -f "$setup_marker" ]; then
+        printf '\n[INFO] Initial administrator setup already completed; skipping.\n'
+        return 0
+    fi
+
+    if [ "$NEWAPI_PUBLISH_PORT" != true ]; then
+        echo "[ERROR] Automatic administrator setup requires NEWAPI_PUBLISH_PORT=true." >&2
+        return 1
+    fi
+    if [ -z "$NEWAPI_ADMIN_USERNAME" ] || [ -z "$NEWAPI_ADMIN_PASSWORD" ]; then
+        echo "[ERROR] Initial administrator credentials are missing. Run init with the same --conf first." >&2
+        return 1
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "[ERROR] Administrator setup requires curl on the host. Install curl, then run start again." >&2
+        return 1
+    fi
+
+    local setup_url="http://127.0.0.1:${NEWAPI_PORT}" wait_deadline=$((SECONDS + 120))
+    printf '\n[INFO] Waiting for New API before initializing the administrator...\n'
+    until curl --fail --silent --noproxy '*' --connect-timeout 2 --max-time 5 \
+        "$setup_url/api/status" >/dev/null; do
+        if [ "$SECONDS" -ge "$wait_deadline" ]; then
+            echo "[ERROR] New API did not become reachable within 120 seconds. Containers were left running; check docker logs $INSTANCE_NAME, then run start again." >&2
+            return 1
+        fi
+        sleep 2
+    done
+
+    local username_json password_json payload response
+    username_json="$(json_string "$NEWAPI_ADMIN_USERNAME")"
+    password_json="$(json_string "$NEWAPI_ADMIN_PASSWORD")"
+    printf -v payload '{"username":%s,"password":%s,"confirmPassword":%s,"SelfUseModeEnabled":true,"DemoSiteEnabled":false}' \
+        "$username_json" "$password_json" "$password_json"
+
+    if ! response="$(printf '%s' "$payload" | curl --fail --silent --show-error --noproxy '*' \
+        --connect-timeout 2 --max-time 30 --request POST \
+        --header 'Content-Type: application/json' --data-binary @- "$setup_url/api/setup")"; then
+        echo "[ERROR] New API administrator setup request failed. Containers were left running; resolve the error, then run start again." >&2
+        return 1
+    fi
+
+    local success_pattern='"success"[[:space:]]*:[[:space:]]*true[[:space:]]*[,}]'
+    if [[ ! "$response" =~ $success_pattern ]]; then
+        printf '[ERROR] New API administrator setup was not successful: %s\n' "$response" >&2
+        echo "[ERROR] No setup marker was written. Containers were left running; resolve the error before running start again." >&2
+        return 1
+    fi
+
+    (
+        umask 077
+        printf 'initialized\n' > "$setup_marker"
+    )
+    printf '[SUCCESS] Initial administrator configured. Credentials are saved in %s.\n' "$CONF_FILE"
+}

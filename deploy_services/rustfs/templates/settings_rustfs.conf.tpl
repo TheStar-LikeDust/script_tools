@@ -1,16 +1,16 @@
-# RustFS Settings (Bash syntax; quote literal secrets with single quotes)
+# RustFS settings (Bash syntax; quote literal secrets with single quotes).
 INSTANCE_NAME="{{INSTANCE_NAME}}"
-IMAGE="rustfs/rustfs:latest"
+IMAGE=""
+RUSTFS_INIT_IMAGE=""
 
-# Optional existing shared Docker network; empty uses a private Compose network.
+# Optional shared Docker network. Empty uses the Compose project's private network.
 DOCKER_NETWORK=""
 
-# Host Ports
-RUSTFS_PORT="{{RUSTFS_PORT}}"
-RUSTFS_ADMIN_PORT="{{RUSTFS_ADMIN_PORT}}"
-# Set false to keep both endpoints inside Docker networks.
-RUSTFS_PUBLISH_PORTS="true"
+# Host ports and publication switch; container ports remain 9000 and 9001.
+RUSTFS_PORT=""
+RUSTFS_ADMIN_PORT=""
+RUSTFS_PUBLISH_PORTS=""
 
-# API Keys
-RUSTFS_ACCESS_KEY="{{RUSTFS_ACCESS_KEY}}"
-RUSTFS_SECRET_KEY="{{RUSTFS_SECRET_KEY}}"
+# Root credentials used only by this RustFS instance and resource initialization.
+RUSTFS_ACCESS_KEY=''
+RUSTFS_SECRET_KEY=''

@@ -4,7 +4,7 @@
 
 > Sub2API 是一个 AI 模型订阅转 API 的网关，将上游订阅账号统一聚合为标准 API，提供账号管理、密钥分发与请求转发能力。
 
-默认通过一个 Docker Compose 项目部署 Sub2API、PostgreSQL 和 Redis。`init` 生成配套连接、数据库密码和应用密钥，`start` 一起启动整套实例，无需先部署 `deploy_services/` 中的服务。
+默认通过一个 Docker Compose 项目部署 Sub2API、ParadeDB 和 Redis。`init` 调用两个基础服务 CLI 准备独立 settings，并复用其服务片段；`start` 启动组合后的整套实例，无需先启动独立基础服务。
 
 ## 2. 核心配置项
 
@@ -12,15 +12,13 @@
 
 - `INSTANCE_NAME`：应用容器与 Compose 项目名；配套容器分别为 `<INSTANCE_NAME>_postgres` 和 `<INSTANCE_NAME>_redis`。
 - `IMAGE`：Sub2API 镜像，默认为 `weishaw/sub2api:latest`。
-- `POSTGRES_IMAGE` / `REDIS_IMAGE`：配套镜像，默认 `paradedb/paradedb:latest-pg17`、`redis:7-alpine`。
 - `SUB2API_PORT`：宿主机 Web/API 端口，容器端口为 `8080`。
 - `DOCKER_NETWORK`：默认留空，Compose 自动创建本实例私有网络；指定时接入管理员预先创建的 external 网络。
-- `DB_HOST` / `DB_PORT`：默认 `<INSTANCE_NAME>_postgres:5432`，使用配套容器地址及内部端口。
-- `DB_NAME` / `DB_USER` / `DB_PASSWORD`：库名和账号默认 `sub2api`，密码由 `init` 随机生成一次；配套 PostgreSQL 首次启动使用同一组配置创建数据库和账号。
-- `DB_SSLMODE`：默认 `disable`。
-- `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DB`：默认 `<INSTANCE_NAME>_redis:6379`、空密码及逻辑库 `0`；配套 Redis 未启用认证。
+- `PARADEDB_CONF` / `REDIS_CONF`：PostgreSQL、Redis settings 路径，默认分别为应用配置目录下的 `settings_paradedb.conf`、`settings_redis.conf`；相对路径以应用 settings 所在目录为基准。
+- `REDIS_DB`：Redis 逻辑库编号，默认 `0`；只区分数据，不提供权限隔离。
+- `REDIS_ENABLE_TLS`：Sub2API 的 Redis TLS 开关，默认 `false`。
 - `DATABASE_MAX_OPEN_CONNS` / `DATABASE_MAX_IDLE_CONNS` / `DATABASE_CONN_MAX_LIFETIME_MINUTES` / `DATABASE_CONN_MAX_IDLE_TIME_MINUTES`：数据库连接池参数。
-- `REDIS_POOL_SIZE` / `REDIS_MIN_IDLE_CONNS` / `REDIS_ENABLE_TLS`：Redis 连接参数，TLS 默认 `false`。
+- `REDIS_POOL_SIZE` / `REDIS_MIN_IDLE_CONNS`：Redis 连接池参数。
 - `SERVER_MODE` / `RUN_MODE`：服务运行模式，默认 `release` / `standard`。
 - `ADMIN_EMAIL` / `ADMIN_PASSWORD`：首次启动时用于初始化管理员账号的凭证。
 - `JWT_SECRET`：会话签名密钥；首次启动后不要更改，否则已有会话失效。
@@ -32,15 +30,27 @@
 - `UPDATE_PROXY_URL`：访问 GitHub 在线更新与价格数据的代理。
 - `GATEWAY_*`：OpenAI 响应超时、HTTP/2 回退、图片流式输出及并发控制参数。
 
+### settings_paradedb.conf
+
+- `INSTANCE_NAME`：默认由 `init` 注入为 `<应用实例名>_postgres`，用于容器名和数据目录名。
+- `DB_NAME` / `DB_USER` / `DB_PASSWORD`：默认库名和账号为 `sub2api`，密码由 ParadeDB CLI 生成并保存在本文件中。
+- `IMAGE`：ParadeDB 镜像，默认 `paradedb/paradedb:latest-pg17`。
+
+### settings_redis.conf
+
+- `INSTANCE_NAME`：默认由 `init` 注入为 `<应用实例名>_redis`，用于容器名和数据目录名。
+- `IMAGE`：Redis 镜像，默认 `redis:7-alpine`。
+- Redis 默认未启用认证；应用收到的 `REDIS_PASSWORD` 为空，不会凭空生成密码。
+
 ## 3. 备注
 
 - 容器以 `AUTO_SETUP=true` 自动执行数据库迁移；首次启动按 `ADMIN_EMAIL` / `ADMIN_PASSWORD` 创建管理员账号。
-- PostgreSQL 和 Redis 不发布宿主机端口，应用等待两者健康后启动。配套 ParadeDB 保留镜像默认预加载配置；Redis 启用 AOF 持久化。
+- PostgreSQL 和 Redis 服务片段由 `deploy_services/paradedb`、`deploy_services/redis` 生成，不发布宿主机端口，应用等待两者健康后启动。ParadeDB 保留镜像默认预加载配置；Redis 启用 AOF 持久化。
 - 每个实例拥有自己的数据库和 Redis 容器及数据目录；相同默认库名、账号不会跨实例共享数据。Redis 库编号用于区分数据，不提供账号权限隔离。
-- `init` 只写本地文件和创建目录，不运行 Docker。重复执行只补齐缺失或空的默认依赖字段，保留已有非空值、数据库密码、管理员凭证及 JWT/TOTP 密钥；不自动补造已丢失的应用密钥。
+- `init` 只写本地文件、调用服务 CLI 生成依赖 settings 和 Compose YAML、创建目录，不运行 Docker。重复执行只补齐缺失或空的默认字段，保留已有非空依赖值、管理员凭证及 JWT/TOTP 密钥。
 - 配套 PostgreSQL 仅在数据目录为空时读取初始化账号和密码；修改 settings 中的密码不会重置已有数据库。容器重启或移除后，保留 settings 和持久化目录即可由 `start` 重建。
-- 当前流程只编排默认配套依赖，修改连接字段不会自动关闭配套容器；外接依赖的切换暂不提供自动化。容器内 `localhost` 指向当前容器。
-- 应用数据保存在 `data/<INSTANCE_NAME>_data`，PostgreSQL 在 `data/<INSTANCE_NAME>_postgres_data`，Redis 在 `data/<INSTANCE_NAME>_redis_data`，均相对 settings 所在目录。
+- 默认依赖配置分别保存在 ParadeDB、Redis 的 settings 中；Sub2API settings 不重复保存数据库用户名、密码和派生连接信息。外接依赖切换暂不提供自动化。容器内 `localhost` 指向当前容器。
+- 应用数据保存在 `data/<INSTANCE_NAME>_data`；PostgreSQL 和 Redis 数据目录名使用各自依赖 settings 中的实例名，默认分别为 `data/<INSTANCE_NAME>_postgres_data` 和 `data/<INSTANCE_NAME>_redis_data`。Compose bind mount 相对应用 settings 所在目录。
 - settings 是 Bash 配置。包含特殊字符的密码和密钥使用单引号并按 Bash 单引号规则转义；生成的 Compose YAML 只包含变量引用，不落入密码值。
 - 应用及两个配套容器均检查 Compose 项目和服务标记，归属不符时拒绝操作。`--conf` 父目录须已存在，YAML 和整套实例数据位于该目录；CLI 和模板仍从脚本目录读取。
 
@@ -82,11 +92,11 @@ bash cli.sh reset
 
 #### init
 
-生成缺失的 settings 和应用凭证，补齐缺失或空的默认数据库、Redis 连接及配套镜像字段，保留已有非空配置和密钥；刷新 Compose YAML 并创建三个持久化目录，不启动容器。补值在原赋值位置写回，字段不存在时才追加。已有配置缺少管理员、端口或 JWT/TOTP 密钥时提示填写或恢复，不自动重建应用密钥。
+生成缺失的应用 settings，并补齐空的镜像、端口、管理员凭证、JWT/TOTP 密钥及运行参数；随后通过 `deploy_services/paradedb/cli.sh init --config-only` 与 `deploy_services/redis/cli.sh init --config-only` 准备依赖 settings。初始化参数注入默认实例名、库名、账号、网络和关闭宿主机端口发布；应用和服务已有非空字段优先保留。之后调用两个服务的 `env`、`render` 生成连接环境和服务片段，再组合总 Compose YAML 并创建三个持久化目录，不启动容器。
 
 #### start
 
-检查配套镜像、数据库、Redis、管理员字段和 JWT/TOTP 密钥，刷新 YAML 并启动整套实例；Sub2API 等待 PostgreSQL、Redis 健康后启动。容器启动后的就绪情况查看日志或健康状态。
+读取应用及两个依赖 settings，通过服务 CLI 获取连接变量并刷新组合 YAML；检查管理员字段和 JWT/TOTP 密钥后启动整套实例。Sub2API 等待 PostgreSQL、Redis 健康后启动，`AUTO_SETUP=true` 由 Sub2API 自身初始化管理员。容器启动后的就绪情况查看日志或健康状态。
 
 ```bash
 docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
@@ -95,11 +105,11 @@ docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
 
 #### up
 
-依次运行 `init` 和 `start`，生成默认配套配置并启动本实例全部服务。
+依次运行 `init` 和 `start`，准备默认配套依赖配置并启动本实例全部服务。
 
 #### update
 
-拉取 settings 指定的应用、PostgreSQL 和 Redis 镜像，再按当前配置应用更新；保留 settings、密钥和全部持久化数据。
+拉取组合 Compose 中的 Sub2API、ParadeDB 和 Redis 镜像，再按当前配置应用更新；保留三份 settings、密钥和全部持久化数据。
 
 ```bash
 docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
@@ -128,11 +138,11 @@ docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
 
 #### purge
 
-危险操作：先执行 `rm`，再按明确路径删除本实例的 `data/<INSTANCE_NAME>_data`、`data/<INSTANCE_NAME>_postgres_data` 和 `data/<INSTANCE_NAME>_redis_data`，保留 settings。
+危险操作：先执行 `rm`，再按明确路径删除本实例应用及依赖配置所对应的三个数据目录，保留三份 settings。
 
 #### reset
 
-危险操作：执行 `purge` 删除整套实例数据，再删除当前 settings 文件和生成的 Compose YAML；源码、模板、其他实例和独立基础服务不受影响。
+危险操作：执行 `purge` 删除整套实例数据，再删除应用 settings、配置目录内的依赖 settings 及这些 settings 对应的生成 Compose YAML。解析到配置目录外的依赖 settings 和对应 YAML 保留；源码、模板、其他实例和独立基础服务不受影响。
 
 #### network ls
 
@@ -142,6 +152,6 @@ docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
 
 应用和配套镜像均可在 settings 中指定版本或 digest。`update` 会拉取并应用全部镜像，应用可能执行数据库结构迁移，升级前备份数据库和配置。PostgreSQL 默认固定 17 主版本，脚本不执行跨主版本迁移。
 
-停止整套实例或完成一致性备份后，复制 CLI、templates、settings、生成 YAML 和本实例三个持久化目录。物理复制 PostgreSQL 数据目录前必须停止数据库，并在目标机器使用兼容主版本。保留数据库密码、`JWT_SECRET`、`TOTP_ENCRYPTION_KEY`、管理员及 OAuth 配置；应用密钥须与数据库备份对应，不能用 `reset` 生成替代值。
+停止整套实例或完成一致性备份后，复制 Sub2API CLI、hooks、templates、ParadeDB/Redis 服务 CLI、hooks 和 templates、三份 settings、生成 YAML 及本实例三个持久化目录。物理复制 PostgreSQL 数据目录前必须停止数据库，并在目标机器使用兼容主版本。保留 ParadeDB settings 中的数据库密码以及应用的 `JWT_SECRET`、`TOTP_ENCRYPTION_KEY`、管理员和 OAuth 配置；应用密钥须与数据库备份对应，不能用 `reset` 生成替代值。
 
-配套 PostgreSQL 和 Redis 数据已包含在应用配置目录下，不依赖 `deploy_services/` 的数据目录。目标机器保留实例名与目录对应关系后运行 `start`；仅设置了 `DOCKER_NETWORK` 时需要预建对应网络。使用外置 `--conf` 时同时携带对应 CLI 和模板。
+默认 ParadeDB 和 Redis 数据由应用组合 Compose 挂载到应用配置目录下，不使用独立基础服务的数据目录。目标机器保留实例名与目录对应关系后运行 `start`；仅设置了 `DOCKER_NETWORK` 时需要预建对应网络。依赖 settings 可以使用相对或绝对路径；绝对路径配置应随迁移单独携带。使用外置 `--conf` 时同时携带对应 CLI、hooks 和 templates。

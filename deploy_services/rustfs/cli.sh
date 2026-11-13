@@ -8,13 +8,72 @@ COMMAND=${1:-help}
 shift || true
 
 CONF_FILE=""
-NAME_OVERRIDE=""
 INTERNAL_ONLY=false
+CONFIG_ONLY=false
+SERVICE_NAME=rustfs
+RESOURCE_OWNER=""
+RESOURCE_BUCKET=""
+RESOURCE_ACCESS_KEY=""
+RESOURCE_SECRET_KEY=""
+RESOURCE_ENDPOINT=""
+DATA_DIR=""
+declare -A INIT_VALUES=()
 while [ $# -gt 0 ]; do
     case "$1" in
-        --conf) CONF_FILE="$2"; shift 2 ;;
-        --name) NAME_OVERRIDE="$2"; shift 2 ;;
-        --internal) INTERNAL_ONLY=true; shift ;;
+        --conf|--name|--image|--init-image|--port|--admin-port|--publish-ports|--network|--service-name|--owner|--bucket|--access-key|--secret-key|--endpoint|--data-dir)
+            [ $# -ge 2 ] || { echo "[ERROR] $1 requires a value." >&2; exit 2; }
+            case "$1" in
+                --conf) CONF_FILE="$2" ;;
+                --service-name)
+                    [ "$COMMAND" = render ] || { echo "[ERROR] --service-name requires render." >&2; exit 2; }
+                    SERVICE_NAME="$2"
+                    ;;
+                --data-dir)
+                    [ "$COMMAND" = prepare-data ] || { echo "[ERROR] --data-dir requires prepare-data." >&2; exit 2; }
+                    DATA_DIR="$2"
+                    ;;
+                --owner) RESOURCE_OWNER="$2" ;;
+                --bucket) RESOURCE_BUCKET="$2" ;;
+                --access-key)
+                    case "$COMMAND" in
+                        init|up) INIT_VALUES[RUSTFS_ACCESS_KEY]="$2" ;;
+                        *) RESOURCE_ACCESS_KEY="$2" ;;
+                    esac
+                    ;;
+                --secret-key)
+                    case "$COMMAND" in
+                        init|up) INIT_VALUES[RUSTFS_SECRET_KEY]="$2" ;;
+                        *) RESOURCE_SECRET_KEY="$2" ;;
+                    esac
+                    ;;
+                --endpoint) RESOURCE_ENDPOINT="$2" ;;
+                *)
+                    case "$COMMAND" in
+                        init|up) ;;
+                        *) echo "[ERROR] $1 requires init or up." >&2; exit 2 ;;
+                    esac
+                    case "$1" in
+                        --name) INIT_VALUES[INSTANCE_NAME]="$2" ;;
+                        --image) INIT_VALUES[IMAGE]="$2" ;;
+                        --init-image) INIT_VALUES[RUSTFS_INIT_IMAGE]="$2" ;;
+                        --port) INIT_VALUES[RUSTFS_PORT]="$2" ;;
+                        --admin-port) INIT_VALUES[RUSTFS_ADMIN_PORT]="$2" ;;
+                        --publish-ports) INIT_VALUES[RUSTFS_PUBLISH_PORTS]="$2" ;;
+                        --network) INIT_VALUES[DOCKER_NETWORK]="$2" ;;
+                    esac
+                    ;;
+            esac
+            shift 2
+            ;;
+        --config-only)
+            [ "$COMMAND" = init ] || { echo "[ERROR] --config-only requires init." >&2; exit 2; }
+            CONFIG_ONLY=true
+            shift
+            ;;
+        --internal)
+            INTERNAL_ONLY=true
+            shift
+            ;;
         *) echo "[ERROR] Unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -28,64 +87,131 @@ COMPOSE_FILE="${CONF_FILE%.conf}.compose.yaml"
 IMAGE="rustfs/rustfs:latest"
 DOCKER_NETWORK=""
 RUSTFS_PUBLISH_PORTS=true
+RUSTFS_PORT=""
+RUSTFS_ADMIN_PORT=""
+RUSTFS_ACCESS_KEY=""
+RUSTFS_SECRET_KEY=""
+RUSTFS_INIT_IMAGE="rustfs/rc:latest"
+source "$SCRIPT_DIR/hooks.sh"
 
 # -----------------------------------------------------------------------------
 # 2. Utility Functions
 # -----------------------------------------------------------------------------
 hr() { echo "-----------------------------------------------------------------------------"; }
 random_port() { shuf -i 30000-40000 -n 1; }
-random_secret() { openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32; }
+random_secret() { openssl rand -hex 16; }
 
-rustfs_uid_gid() (
-    local probe_name passwd_dir passwd_file uid_gid
-    probe_name="rustfs_uid_probe_$$"
-    passwd_dir="$(mktemp -d)"
-    passwd_file="$passwd_dir/passwd"
-    trap 'docker rm -f "$probe_name" >/dev/null 2>&1 || true; rm -f "$passwd_file"; rmdir "$passwd_dir" 2>/dev/null || true' EXIT
-
-    if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-        docker pull "$IMAGE" >/dev/null
-    fi
-    docker create --name "$probe_name" "$IMAGE" >/dev/null
-    docker cp "$probe_name:/etc/passwd" "$passwd_file" >/dev/null
-    uid_gid="$(awk -F: '$1 == "rustfs" { print $3 ":" $4; exit }' "$passwd_file")"
-    if [ -z "$uid_gid" ]; then
-        echo "[ERROR] [RustFS] Could not resolve the UID/GID for image user 'rustfs'." >&2
-        return 1
-    fi
-    printf '%s' "$uid_gid"
+save_setting() (
+    umask 077
+    local key="$1" value="$2" setting_line settings_tmp
+    printf -v setting_line '%s=%q' "$key" "$value"
+    settings_tmp="$(mktemp "${CONF_FILE}.XXXXXX")"
+    trap 'rm -f -- "$settings_tmp"' EXIT
+    SETTING_LINE="$setting_line" awk -v key="$key" '
+        { sub(/\r$/, "") }
+        $0 ~ "^[[:space:]]*(export[[:space:]]+)?" key "=" {
+            if (!written) print ENVIRON["SETTING_LINE"]
+            written = 1
+            next
+        }
+        { print }
+        END { if (!written) print ENVIRON["SETTING_LINE"] }
+    ' "$CONF_FILE" > "$settings_tmp"
+    mv -- "$settings_tmp" "$CONF_FILE"
 )
 
-ensure_data_owner() {
-    local data_dir="$1" uid_gid current_owner
-    uid_gid="$(rustfs_uid_gid)"
-    current_owner="$(stat -c '%u:%g' "$data_dir")"
-    if [ "$current_owner" != "$uid_gid" ]; then
-        echo "[INFO] [RustFS] Setting data directory ownership to $uid_gid."
-        chown -R "$uid_gid" "$data_dir"
+complete_settings() {
+    local key value timestamp
+    local -a missing_keys=()
+    for key in INSTANCE_NAME IMAGE RUSTFS_INIT_IMAGE DOCKER_NETWORK RUSTFS_PORT RUSTFS_ADMIN_PORT RUSTFS_PUBLISH_PORTS RUSTFS_ACCESS_KEY RUSTFS_SECRET_KEY; do
+        [ -n "${!key:-}" ] || {
+            value="${INIT_VALUES[$key]-}"
+            if [ -z "$value" ]; then
+                case "$key" in
+                    INSTANCE_NAME) timestamp="$(date +%s)"; value="rustfs_${timestamp: -4}" ;;
+                    IMAGE) value="rustfs/rustfs:latest" ;;
+                    RUSTFS_INIT_IMAGE) value="rustfs/rc:latest" ;;
+                    DOCKER_NETWORK) value="" ;;
+                    RUSTFS_PORT) value="$(random_port)" ;;
+                    RUSTFS_ADMIN_PORT)
+                        value="$(random_port)"
+                        while [ "$value" = "$RUSTFS_PORT" ]; do value="$(random_port)"; done
+                        ;;
+                    RUSTFS_PUBLISH_PORTS) value=true ;;
+                    RUSTFS_ACCESS_KEY) value="$(openssl rand -hex 10)" ;;
+                    RUSTFS_SECRET_KEY) value="$(random_secret)" ;;
+                esac
+            fi
+            printf -v "$key" '%s' "$value"
+            missing_keys+=("$key")
+        }
+    done
+    require_settings
+    for key in "${missing_keys[@]}"; do save_setting "$key" "${!key}"; done
+}
+
+require_settings() {
+    local key
+    for key in INSTANCE_NAME IMAGE RUSTFS_INIT_IMAGE RUSTFS_PORT RUSTFS_ADMIN_PORT RUSTFS_PUBLISH_PORTS RUSTFS_ACCESS_KEY RUSTFS_SECRET_KEY; do
+        if [ -z "${!key:-}" ]; then
+            echo "[ERROR] Missing $key in $CONF_FILE." >&2
+            return 1
+        fi
+    done
+    if [[ ! "$INSTANCE_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+        echo "[ERROR] INSTANCE_NAME must match [a-z0-9][a-z0-9_-]*." >&2
+        return 1
+    fi
+    if [ "$RUSTFS_PUBLISH_PORTS" != true ] && [ "$RUSTFS_PUBLISH_PORTS" != false ]; then
+        echo "[ERROR] RUSTFS_PUBLISH_PORTS must be true or false." >&2
+        return 1
+    fi
+    for key in RUSTFS_PORT RUSTFS_ADMIN_PORT; do
+        if [[ ! "${!key}" =~ ^[0-9]{1,5}$ ]] || ((10#${!key} < 1 || 10#${!key} > 65535)); then
+            echo "[ERROR] $key must be an integer between 1 and 65535." >&2
+            return 1
+        fi
+    done
+    for key in RUSTFS_ACCESS_KEY RUSTFS_SECRET_KEY; do
+        if [[ "${!key}" == *$'\n'* || "${!key}" == *$'\r'* ]]; then
+            echo "[ERROR] $key must be a single-line value." >&2
+            return 1
+        fi
+    done
+    if [ "$RUSTFS_PORT" = "$RUSTFS_ADMIN_PORT" ]; then
+        echo "[ERROR] RUSTFS_PORT and RUSTFS_ADMIN_PORT must be different." >&2
+        return 1
+    fi
+    if [ -n "$DOCKER_NETWORK" ] && [[ ! "$DOCKER_NETWORK" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]]; then
+        echo "[ERROR] DOCKER_NETWORK contains unsupported characters." >&2
+        return 1
     fi
 }
 
 load_settings() {
     if [ ! -f "$CONF_FILE" ]; then
-        echo "[ERROR] [RustFS] $CONF_FILE not found. Run 'bash cli.sh init' first."
+        echo "[ERROR] [RustFS] $CONF_FILE not found. Run 'bash cli.sh init' first." >&2
         exit 1
     fi
-    # Read CRLF files without rewriting existing credentials.
+    INSTANCE_NAME=""
+    IMAGE=""
+    DOCKER_NETWORK=""
+    RUSTFS_PORT=""
+    RUSTFS_ADMIN_PORT=""
+    RUSTFS_PUBLISH_PORTS=""
+    RUSTFS_ACCESS_KEY=""
+    RUSTFS_SECRET_KEY=""
+    RUSTFS_INIT_IMAGE=""
     set -a
     source <(sed 's/\r$//' "$CONF_FILE")
     set +a
     if [ "$INTERNAL_ONLY" = true ]; then
         RUSTFS_PUBLISH_PORTS=false
     fi
-    export IMAGE DOCKER_NETWORK RUSTFS_PUBLISH_PORTS
-    if [[ ! "$INSTANCE_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
-        echo "[ERROR] INSTANCE_NAME must match [a-z0-9][a-z0-9_-]*." >&2
-        exit 1
-    fi
 }
 
 compose() {
+    export_compose_env
     docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
         --project-name "$INSTANCE_NAME" -f "$COMPOSE_FILE" "$@"
 }
@@ -106,43 +232,32 @@ require_managed_container() {
 # -----------------------------------------------------------------------------
 generate_settings() (
     umask 077
-    local port admin_port access_key secret_key
-    port=$(random_port)
-    admin_port=$(random_port)
-    while [ "$admin_port" = "$port" ]; do admin_port=$(random_port); done
-    access_key=$(random_secret)
-    secret_key=$(random_secret)
-    local name="$NAME_OVERRIDE"
+    local name="${INIT_VALUES[INSTANCE_NAME]-}"
     if [ -z "$name" ]; then
         local ts=$(date +%s)
         name="rustfs_${ts: -4}"
     fi
+    [[ "$name" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo "[ERROR] Invalid instance name: $name" >&2; return 1; }
 
     sed -e "s/{{INSTANCE_NAME}}/${name}/g" \
-        -e "s/{{RUSTFS_PORT}}/${port}/g" \
-        -e "s/{{RUSTFS_ADMIN_PORT}}/${admin_port}/g" \
-        -e "s/{{RUSTFS_ACCESS_KEY}}/${access_key}/g" \
-        -e "s/{{RUSTFS_SECRET_KEY}}/${secret_key}/g" \
         "$TPL_DIR/settings_rustfs.conf.tpl" > "$CONF_FILE"
 )
 
 generate_compose() {
-    cat "$TPL_DIR/compose.yaml.tpl" > "$COMPOSE_FILE"
-    if [ "$RUSTFS_PUBLISH_PORTS" = true ]; then
-        cat >> "$COMPOSE_FILE" <<'YAML'
-    ports:
-      - "${RUSTFS_PORT:?RUSTFS_PORT is required}:9000"
-      - "${RUSTFS_ADMIN_PORT:?RUSTFS_ADMIN_PORT is required}:9001"
-YAML
-    fi
-    if [ -n "$DOCKER_NETWORK" ]; then
-        cat >> "$COMPOSE_FILE" <<'YAML'
+    require_settings
+    export_compose_env
+    {
+        printf '# Generated by cli.sh. Edit templates/compose.yaml.tpl for persistent changes.\nservices:\n'
+        render_service
+        if [ -n "$DOCKER_NETWORK" ]; then
+            cat <<'YAML'
 networks:
   default:
     external: true
-    name: "${DOCKER_NETWORK}"
+    name: "${RUSTFS_DOCKER_NETWORK}"
 YAML
-    fi
+        fi
+    } > "$COMPOSE_FILE"
 }
 
 # -----------------------------------------------------------------------------
@@ -155,6 +270,12 @@ do_init() {
 
     [ ! -f "$CONF_FILE" ] && generate_settings
     load_settings
+    complete_settings
+    if [ "$CONFIG_ONLY" = true ]; then
+        printf '\n[SUCCESS] [RustFS] Settings ready: %s\n' "$CONF_FILE"
+        printf 'Existing nonempty values were preserved; no YAML or data directory was generated.\n\n'
+        return 0
+    fi
     generate_compose
 
     # Pre-create the bind-mount data dir so Docker won't auto-create it as root
@@ -172,6 +293,7 @@ do_init() {
 
 do_start() {
     load_settings
+    require_settings
     require_managed_container
     mkdir -p "${CONF_DIR}/data/${INSTANCE_NAME}_data"
     ensure_data_owner "${CONF_DIR}/data/${INSTANCE_NAME}_data"
@@ -196,6 +318,7 @@ do_start() {
 
 do_update() {
     load_settings
+    require_settings
     require_managed_container
     mkdir -p "${CONF_DIR}/data/${INSTANCE_NAME}_data"
     generate_compose
@@ -214,6 +337,7 @@ do_update() {
 
 do_stop() {
     load_settings
+    require_settings
     require_managed_container
     [ -f "$COMPOSE_FILE" ] || generate_compose
     hr
@@ -224,6 +348,7 @@ do_stop() {
 
 do_rm() {
     load_settings
+    require_settings
     require_managed_container
     [ -f "$COMPOSE_FILE" ] || generate_compose
     hr
@@ -262,8 +387,8 @@ do_reset() {
 }
 
 do_help() {
-    echo "Usage: $0 {init|start|up|update|stop|rm|purge|reset} [--conf PATH] [--name NAME] [--internal]"
-    echo "  init    : Generate settings if absent, then Compose YAML and data dir; do not start"
+    echo "Usage: $0 {init|start|up|update|stop|rm|purge|reset|render|env|prepare-data|resource-init} [OPTIONS]"
+    echo "  init    : Generate or complete settings, Compose YAML and data dir; do not start"
     echo "  start   : Refresh Compose YAML and run docker compose up -d"
     echo "  update  : Pull the configured image and recreate the service if needed"
     echo "  up      : Initialize config and start the container instantly"
@@ -271,12 +396,22 @@ do_help() {
     echo "  rm      : Remove the container (Preserves ./data and settings_rustfs.conf)"
     echo "  purge   : DANGER - Remove container AND permanently delete ./data (Preserves settings_rustfs.conf)"
     echo "  reset   : DANGER - purge AND delete only this config and its generated YAML"
+    echo "  render  : Print a reusable RustFS service fragment"
+    echo "  env     : Print Bash exports for RUSTFS_* values, including root credentials"
+    echo "  prepare-data  : Prepare the configured RustFS data directory and its owner"
+    echo "  resource-init : Create an app bucket, dedicated user and bucket-scoped policy"
     echo ""
     echo "Options:"
     echo "  --conf PATH : Config file location (default: <script_dir>/settings_rustfs.conf)."
     echo "                Data dir is derived as <dir-of-conf>/data/<INSTANCE_NAME>_data."
-    echo "  --name NAME : Full instance name to write at init (default: auto 'rustfs_<ts>')."
-    echo "  --internal  : Do not publish ports for this start command (persist RUSTFS_PUBLISH_PORTS=false to keep private)."
+    echo "  init options: --name NAME --image IMAGE --init-image IMAGE --port PORT --admin-port PORT"
+    echo "               --publish-ports true|false --network NAME --config-only"
+    echo "               --access-key KEY --secret-key SECRET"
+    echo "  render option: --service-name NAME (default: rustfs)"
+    echo "  prepare-data option: --data-dir PATH (default: settings directory/data/<INSTANCE_NAME>_data)"
+    echo "  resource-init options: --owner NAME --bucket NAME --access-key KEY"
+    echo "                        --secret-key SECRET --endpoint URL"
+    echo "  --internal: Disable host ports for this command only."
 }
 
 # -----------------------------------------------------------------------------
@@ -291,5 +426,10 @@ case "$COMMAND" in
     rm)      do_rm ;;
     purge)   do_purge ;;
     reset)   do_reset ;;
-    *)       do_help ;;
+    render)  load_settings; require_settings; export_compose_env; render_service "$SERVICE_NAME" ;;
+    env)     load_settings; require_settings; export_compose_env true ;;
+    prepare-data) load_settings; require_settings; ensure_data_owner "${DATA_DIR:-$CONF_DIR/data/${INSTANCE_NAME}_data}" ;;
+    resource-init) load_settings; require_settings; initialize_resources ;;
+    help)    do_help ;;
+    *)       do_help; exit 2 ;;
 esac

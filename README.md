@@ -6,12 +6,12 @@
 
 - 目录即服务：每个部署目录集中保存本服务的部署定义、配置、密钥和相对路径 bind mount 数据。停止服务或完成一致性备份后，可复制该目录到新机器重新启动；共享基础服务的数据从其自己的目录单独迁移。
 - 简化生命周期：`cli.sh` 保留配置初始化、随机密钥生成和服务专属操作，容器创建、网络接入和配置变化后的重建交给 Docker Compose。
-- 配套部署：Casdoor、LobeHub、New API、Sub2API 默认在各自的 Compose 项目中携带所需 PostgreSQL、Redis、RustFS。应用配置统一保存连接和凭证，生命周期命令管理本实例整套服务。
+- 配套部署：Casdoor 默认组合 PostgreSQL；New API、Sub2API 组合 PostgreSQL、Redis；LobeHub 组合 PostgreSQL、Redis、RustFS。基础服务配置和服务片段由 `deploy_services/` 生成，应用生命周期管理本实例整套服务。
 
 ## 项目架构
 
-- `deploy_services/`：ParadeDB、Redis、RustFS，独立管理配置、凭证和数据。
-- `deploy_apps/`：Casdoor 自带 PostgreSQL；New API、Sub2API 自带 PostgreSQL 和 Redis；LobeHub（目录名 `lobechat`）自带 PostgreSQL、Redis 和 RustFS。Open WebUI 默认使用 SQLite 和本地存储。
+- `deploy_services/`：ParadeDB、Redis、RustFS，统一维护服务配置、凭证、Compose 片段与连接信息，同时支持独立部署。
+- `deploy_apps/`：Casdoor、New API、Sub2API、LobeHub（目录名 `lobechat`）调用服务接口组合默认依赖。Open WebUI 默认使用 SQLite 和本地存储。
 - `tools/`：宿主机工具，包括 code-server、nginx、certbot 和 Docker 防火墙配置，各用自己的命令接口。
 
 ## 设计文档
@@ -36,15 +36,21 @@ bash cli.sh init
 bash cli.sh start
 ```
 
-数据库连接和配套密码由 `init` 填好。PostgreSQL 首次启动时创建配置指定的数据库及账号；Redis 默认无密码，数据持久化。数据库和 Redis 使用容器端口 `5432`、`6379`，不发布宿主机端口。Compose 自动创建本实例私有网络，无需先启动 `deploy_services/` 中的服务。
+New API 的 `init` 会通过 `deploy_services/paradedb` 和 `deploy_services/redis` 准备三份 settings，并由服务接口生成数据库 DSN 和 Redis URL。PostgreSQL 首次启动时创建配置指定的数据库及账号；Redis 默认无密码，数据持久化。数据库和 Redis 使用容器端口 `5432`、`6379`，不发布宿主机端口。Compose 自动创建本实例私有网络，无需先启动 `deploy_services/` 中的服务。
 
-LobeHub 的 `APP_URL`、浏览器访问的 `S3_ENDPOINT` 和真实 `AUTH_ALLOWED_EMAILS` 需在生成的 settings 中填写。RustFS 凭证和 Bucket 名自动生成；启动阶段创建缺失 Bucket，CORS 暂不自动配置。模型 API Key、OAuth 等外部凭证仍由使用者提供。
+LobeHub 的 `APP_URL`、浏览器和容器均可访问的 `S3_ENDPOINT`、真实 `AUTH_ALLOWED_EMAILS` 可通过 `init --app-url --s3-endpoint --auth-allowed-emails` 传入，也可在应用 settings 中填写。启动阶段调用 RustFS `resource-init` 创建专用用户、Bucket 和访问策略；管理员凭证由 RustFS settings 保存。CORS 暂不自动配置，模型 API Key、OAuth 等外部凭证由使用者提供。
 
-四个配套应用再次 `init` 时补齐缺失或空的默认连接配置，保留已有非空配置和密钥。settings 是 Bash 配置；`DB_*` 保存原始字段，由脚本转义或映射到应用环境变量。只修改连接地址不会自动停用 Compose 中的配套服务；外接依赖切换不属于当前自动化流程。
+四个应用先生成或读取应用与依赖的全部 settings，再组合 YAML。应用只保存自身字段、依赖配置路径及需要的专用 S3 凭证，数据库账号和密码保存在 ParadeDB settings，连接串由服务生成。settings 是 Bash 配置；外接依赖切换不属于当前自动化流程。旧版单配置及旧数据不做自动迁移。
 
 ### 独立基础服务
 
 `deploy_services/` 中的 ParadeDB、Redis、RustFS 仍可单独 `init/start`。这些独立项目由各自 CLI 管理，不参与应用默认部署的启停或清理。需要多个项目互通时，可由管理员预建共享网络并设置 `DOCKER_NETWORK`；该网络不会随 `rm` 删除。
+
+### 复用基础服务定义
+
+三个基础服务的 `init` 支持注入实例名、镜像、宿主机端口、发布开关和网络；ParadeDB 另支持数据库名、账号和密码，RustFS 支持控制台端口及管理员凭证。已有非空配置优先，参数只用于新配置或补齐空字段。`init --config-only` 只准备 settings，便于应用准备全部配置后再构建总 YAML。
+
+`render` 输出服务 YAML 片段，`env` 输出带 `PARADEDB_*`、`REDIS_*`、`RUSTFS_*` 前缀的 Bash 导出语句及连接信息；独立部署使用同一模板。四个应用均已接入，生成 YAML 仅保留变量引用。RustFS 还提供 `prepare-data` 和 `resource-init`，由应用 hooks 调用。接口和已核对的部署依据见 [ParadeDB](docs/deploy_services/paradedb.md)、[Redis](docs/deploy_services/redis.md)、[RustFS](docs/deploy_services/rustfs.md)。
 
 ### 服务与工具说明
 
@@ -69,7 +75,7 @@ bash cli.sh rm        # Remove its containers/private network; keep settings and
 
 LobeHub 在 `start/update` 时补齐缺失的 JWKS 并保存，优先使用宿主机 Node.js，没有 Node.js 时运行一次性应用容器。重复启动保留原值，`init` 不运行密钥生成容器。
 
-`update` 拉取并应用本 Compose 项目的全部镜像，包含配套依赖，镜像由 settings 中的 `IMAGE`、`POSTGRES_IMAGE` 等字段决定，保留配置、密钥和 bind mount 数据。镜像可能自动升级数据库结构，升级前应备份并核对版本要求；该命令不负责 PostgreSQL 跨主版本数据迁移。RustFS 还会根据拉取后的镜像修正数据目录属主。
+`update` 拉取并应用本 Compose 项目的应用及依赖镜像，由各自 settings 中的 `IMAGE` 决定，保留配置、密钥和 bind mount 数据。镜像可能升级数据库结构；该命令不负责 PostgreSQL 跨主版本数据迁移。RustFS 根据拉取后的镜像修正数据目录属主，LobeHub 继续调用资源初始化接口。
 
 危险的清理命令：
 
@@ -78,14 +84,14 @@ bash cli.sh purge    # Remove this project and its own local runtime data.
 bash cli.sh reset    # purge, then remove this settings file and generated YAML.
 ```
 
-四个配套应用的 `rm` 删除整套实例容器和私有网络，保留配置与全部持久化数据；随后 `start` 可重建容器。`purge` 额外删除本实例应用及配套 PostgreSQL、Redis、RustFS 的数据目录，保留 settings；`reset` 再删除 settings、生成 YAML 和附属配置。Casdoor 的 `purge` 保留 app.conf，`reset` 删除其生成配置目录。清理范围以本实例明确路径为准，不删除源码模板、其他实例或独立基础服务。Open WebUI 保持原有本地数据清理范围。
+四个配套应用的 `rm` 删除整套实例容器和私有网络，保留配置与持久化数据；随后 `start` 可重建容器。`purge` 删除本实例应用及依赖的数据目录，保留 settings；`reset` 再删除应用 settings、生成 YAML、默认依赖 settings 和附属配置。Casdoor、LobeHub、Sub2API 也删除本实例目录内明确引用的自定义依赖 settings 及对应 YAML，目录外配置保留。Casdoor 的 `purge` 保留 app.conf，`reset` 删除其生成配置目录。清理不涉及源码模板、其他实例或独立基础服务。
 
 查看状态使用 `docker ps -a --filter 'name=^/<INSTANCE_NAME>$'`，日志使用 `docker logs -f <INSTANCE_NAME>`，执行前替换实例名占位符。应用的 `bash cli.sh network ls` 只读显示配置网络；没有 `status` 命令。`start/update` 返回成功表示 Compose 已启动容器，应用就绪情况查看日志或健康状态。
 
 ## 复制目录迁移
 
-停止整套实例或完成一致性备份后，复制完整部署目录，包括 CLI、模板、settings、生成 YAML、密钥和本地 data。四个配套应用的数据包含 `data/<INSTANCE_NAME>_postgres_data`，需要 Redis 或 RustFS 时还包含对应的 `_redis_data`、`_rustfs_data`。目标机器准备 Docker Engine 和 Compose v2，保留实例名、配置及目录对应关系后运行 `start`；使用 external 网络时另行准备该网络。物理复制 PostgreSQL 数据目录必须先停止数据库并使用兼容主版本，不能直接复制正在写入的数据库目录。
+停止整套实例或完成一致性备份后，复制完整部署目录，包括 CLI、存在的 hooks.sh、模板、settings、生成 YAML、密钥和本地 data。四个配套应用的数据包含 `data/<INSTANCE_NAME>_postgres_data`，需要 Redis 或 RustFS 时还包含对应的 `_redis_data`、`_rustfs_data`。目标机器准备 Docker Engine 和 Compose v2，保留实例名、配置及目录对应关系后运行 `start`；使用 external 网络时另行准备该网络。物理复制 PostgreSQL 数据目录必须先停止数据库并使用兼容主版本，不能直接复制正在写入的数据库目录。
 
 默认配套依赖的数据随应用配置目录一起保存；独立部署的基础服务仍从各自目录备份和迁移。Open WebUI 默认 SQLite 与上传文件保存在本地数据目录。复制恢复必须保留应用加密密钥，切换 Open WebUI 的数据库类型不会自动搬迁数据。
 
-使用 `--conf` 将配置放在其他目录时，还需携带对应 CLI 和 templates；复制配置目录本身不能替代部署脚本。自定义配置位置应放在版本库外，或自行补充忽略规则。
+使用 `--conf` 时还需携带应用及所用 `deploy_services/` 的 CLI、hooks 和 templates，并保留脚本之间的相对目录结构。复制配置目录本身不能替代部署脚本。多实例分别使用独立配置目录及唯一实例名，避免默认依赖配置文件重名。自定义配置位置应放在版本库外，或自行补充忽略规则。

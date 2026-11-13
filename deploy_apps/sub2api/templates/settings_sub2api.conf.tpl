@@ -4,11 +4,13 @@
 INSTANCE_NAME="{{INSTANCE_NAME}}"
 SUB2API_PORT="{{SUB2API_PORT}}"
 IMAGE="weishaw/sub2api:latest"
-POSTGRES_IMAGE="paradedb/paradedb:latest-pg17"
-REDIS_IMAGE="redis:7-alpine"
 # Leave empty for a private Compose network; otherwise use an existing network.
 DOCKER_NETWORK=""
 TZ="Asia/Shanghai"
+
+# Dependency settings are generated beside this file by init.
+PARADEDB_CONF="settings_paradedb.conf"
+REDIS_CONF="settings_redis.conf"
 
 # Server runtime
 SERVER_MODE="release"
@@ -27,27 +29,14 @@ JWT_EXPIRE_HOUR="24"
 # NEVER change after first start: existing 2FA secrets cannot be decrypted.
 TOTP_ENCRYPTION_KEY='{{TOTP_ENCRYPTION_KEY}}'
 
-# === Bundled PostgreSQL ===
-# The bundled database creates this account and database on its first start.
-# init fills a missing password once; retain it with the database data.
-DB_HOST="{{INSTANCE_NAME}}_postgres"
-DB_PORT="5432"
-DB_NAME="sub2api"
-DB_USER="sub2api"
-DB_PASSWORD=''
-DB_SSLMODE="disable"
-
 # === Database connection pool ===
 DATABASE_MAX_OPEN_CONNS="50"
 DATABASE_MAX_IDLE_CONNS="10"
 DATABASE_CONN_MAX_LIFETIME_MINUTES="30"
 DATABASE_CONN_MAX_IDLE_TIME_MINUTES="5"
 
-# === Redis ===
-# The bundled Redis has no authentication and does not publish a host port.
-REDIS_HOST="{{INSTANCE_NAME}}_redis"
-REDIS_PORT="6379"
-REDIS_PASSWORD=''
+# === Redis application settings ===
+# The bundled Redis uses database 0 and does not enable authentication.
 REDIS_DB="0"
 REDIS_POOL_SIZE="1024"
 REDIS_MIN_IDLE_CONNS="10"

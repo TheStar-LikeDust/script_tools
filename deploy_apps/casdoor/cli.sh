@@ -11,8 +11,8 @@ CONF_FILE=""
 NAME_OVERRIDE=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        --conf) CONF_FILE="$2"; shift 2 ;;
-        --name) NAME_OVERRIDE="$2"; shift 2 ;;
+        --conf) [ $# -ge 2 ] || { echo "[ERROR] --conf requires a value." >&2; exit 2; }; CONF_FILE="$2"; shift 2 ;;
+        --name) [ $# -ge 2 ] || { echo "[ERROR] --name requires a value." >&2; exit 2; }; NAME_OVERRIDE="$2"; shift 2 ;;
         ls) [ "$COMMAND" = network ] || { echo "[ERROR] Unknown option: $1" >&2; exit 2; }; shift ;;
         *) echo "[ERROR] Unknown option: $1" >&2; exit 2 ;;
     esac
@@ -26,14 +26,8 @@ CONF_FILE="$CONF_DIR/$(basename "$CONF_FILE")"
 COMPOSE_FILE="${CONF_FILE%.conf}.compose.yaml"
 IMAGE="casbin/casdoor:latest"
 DOCKER_NETWORK=""
-POSTGRES_IMAGE=""
 CASDOOR_PORT=""
-DB_HOST=""
-DB_PORT=""
-DB_NAME=""
-DB_USER=""
-DB_PASSWORD=""
-DB_SSLMODE=""
+PARADEDB_CONF=""
 APP_CONF_HASH=""
 source "$SCRIPT_DIR/hooks.sh"
 
@@ -42,7 +36,6 @@ source "$SCRIPT_DIR/hooks.sh"
 # -----------------------------------------------------------------------------
 hr() { echo "-----------------------------------------------------------------------------"; }
 random_port() { shuf -i 30000-40000 -n 1; }
-random_password() { openssl rand -hex 16; }
 
 save_setting() (
     umask 077
@@ -65,16 +58,12 @@ save_setting() (
 
 complete_settings() {
     local key value
-    for key in POSTGRES_IMAGE CASDOOR_PORT DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD DB_SSLMODE; do
+    for key in IMAGE CASDOOR_PORT PARADEDB_CONF; do
         [ -n "${!key:-}" ] && continue
         case "$key" in
-            POSTGRES_IMAGE) value="paradedb/paradedb:latest-pg17" ;;
+            IMAGE) value="casbin/casdoor:latest" ;;
             CASDOOR_PORT) value=$(random_port) ;;
-            DB_HOST) value="${INSTANCE_NAME}_postgres" ;;
-            DB_PORT) value="5432" ;;
-            DB_NAME|DB_USER) value="casdoor" ;;
-            DB_PASSWORD) value=$(random_password) ;;
-            DB_SSLMODE) value="disable" ;;
+            PARADEDB_CONF) value="settings_paradedb.conf" ;;
         esac
         save_setting "$key" "$value"
         printf -v "$key" '%s' "$value"
@@ -87,10 +76,16 @@ load_settings() {
         echo "[ERROR] [Casdoor] $CONF_FILE not found. Run 'bash cli.sh init' first." >&2
         return 1
     fi
+    INSTANCE_NAME=""
+    IMAGE=""
+    DOCKER_NETWORK=""
+    CASDOOR_PORT=""
+    PARADEDB_CONF=""
+    APP_CONF_HASH=""
     set -a
     source <(sed 's/\r$//' "$CONF_FILE")
     set +a
-    export IMAGE DOCKER_NETWORK POSTGRES_IMAGE APP_CONF_HASH
+    export IMAGE DOCKER_NETWORK APP_CONF_HASH
     if [[ ! "${INSTANCE_NAME:-}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
         echo "[ERROR] INSTANCE_NAME must match [a-z0-9][a-z0-9_-]*." >&2
         return 1
@@ -99,23 +94,24 @@ load_settings() {
 
 validate_settings() {
     local key
-    for key in POSTGRES_IMAGE CASDOOR_PORT DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD DB_SSLMODE; do
+    for key in INSTANCE_NAME IMAGE CASDOOR_PORT PARADEDB_CONF; do
         if [ -z "${!key:-}" ]; then
-            echo "[ERROR] Missing $key in $CONF_FILE. Run 'bash cli.sh init --conf $CONF_FILE' to complete bundled settings." >&2
+            echo "[ERROR] Missing $key in $CONF_FILE. Run 'bash cli.sh init --conf $CONF_FILE' to complete settings." >&2
             return 1
         fi
         if [[ "${!key}" == *$'\n'* || "${!key}" == *$'\r'* ]]; then
-            echo "[ERROR] $key must be a single-line value for Casdoor app.conf." >&2
+            echo "[ERROR] $key must be a single-line value." >&2
             return 1
         fi
     done
-    if [[ ! "$DB_NAME" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
-        echo "[ERROR] DB_NAME must contain letters, digits and underscores, beginning with a letter or underscore." >&2
+    if [[ ! "$CASDOOR_PORT" =~ ^[0-9]{1,5}$ ]] || ((10#$CASDOOR_PORT < 1 || 10#$CASDOOR_PORT > 65535)); then
+        echo "[ERROR] CASDOOR_PORT must be a host port between 1 and 65535." >&2
         return 1
     fi
 }
 
 compose() {
+    export_compose_environment
     docker compose --env-file /dev/null --project-directory "$CONF_DIR" \
         --project-name "$INSTANCE_NAME" -f "$COMPOSE_FILE" "$@"
 }
@@ -124,7 +120,7 @@ require_managed_container() {
     local service container_name container labels
     for service in casdoor postgres; do
         container_name="$INSTANCE_NAME"
-        if [ "$service" = postgres ]; then container_name="${INSTANCE_NAME}_postgres"; fi
+        if [ "$service" = postgres ]; then container_name="$PARADEDB_INSTANCE_NAME"; fi
         container="$(docker container ls -a --filter "name=^/$container_name$" --format '{{.Names}}')"
         [ -n "$container" ] || continue
         labels="$(docker container inspect --format '{{index .Config.Labels "com.docker.compose.project"}}/{{index .Config.Labels "com.docker.compose.service"}}' "$container_name")"
@@ -140,9 +136,8 @@ require_managed_container() {
 # -----------------------------------------------------------------------------
 generate_settings() (
     umask 077
-    local name="$NAME_OVERRIDE" port ts db_password
+    local name="$NAME_OVERRIDE" port ts
     port=$(random_port)
-    db_password=$(random_password)
     if [ -z "$name" ]; then
         ts=$(date +%s)
         name="casdoor_${ts: -4}"
@@ -153,45 +148,34 @@ generate_settings() (
     fi
     sed -e "s/{{INSTANCE_NAME}}/$name/g" \
         -e "s/{{CASDOOR_PORT}}/$port/g" \
-        -e "s/{{DB_PASSWORD}}/$db_password/g" \
         "$TPL_DIR/settings_casdoor.conf.tpl" > "$CONF_FILE"
 )
 
-generate_compose() {
-    cat "$TPL_DIR/compose.yaml.tpl" > "$COMPOSE_FILE"
-    if [ -n "$DOCKER_NETWORK" ]; then
-        cat >> "$COMPOSE_FILE" <<'YAML'
-networks:
-  default:
-    external: true
-    name: "${DOCKER_NETWORK}"
-YAML
-    fi
-}
-
-# -----------------------------------------------------------------------------
-# 4. Lifecycle Functions (do_xxx)
-# -----------------------------------------------------------------------------
 do_init() {
     [ -f "$CONF_FILE" ] || generate_settings
     load_settings
     complete_settings
-    generate_compose
-    mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data" "$CONF_DIR/data/${INSTANCE_NAME}_postgres_data"
+    prepare_dependency_settings
+    load_dependency_environment
+    render_compose
+    mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data" "$CONF_DIR/data/${PARADEDB_INSTANCE_NAME}_data"
     hr
-    echo "[SUCCESS] [Casdoor] Bundled settings and Compose YAML are ready; existing values were preserved."
+    echo "[SUCCESS] [Casdoor] Application and ParadeDB settings are ready; existing values were preserved."
+    echo "  App:      $CONF_FILE"
+    echo "  ParadeDB: $(resolve_dependency_conf paradedb)"
+    echo "  Compose:  $COMPOSE_FILE"
     echo "Run 'bash cli.sh start --conf $CONF_FILE' to start Casdoor and its PostgreSQL together."
-    echo "Compose definition: $COMPOSE_FILE (generated; edit templates/compose.yaml.tpl for persistent changes)."
     hr
 }
 
 do_start() {
     load_settings
     validate_settings
+    load_dependency_environment
     require_managed_container
     render_app_conf
-    generate_compose
-    mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data" "$CONF_DIR/data/${INSTANCE_NAME}_postgres_data"
+    render_compose
+    mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data" "$CONF_DIR/data/${PARADEDB_INSTANCE_NAME}_data"
     compose up -d
     echo "[INFO] [Casdoor] Bundled stack started: http://<SERVER_IP>:$CASDOOR_PORT; inspect logs for readiness."
 }
@@ -199,41 +183,51 @@ do_start() {
 do_update() {
     load_settings
     validate_settings
+    load_dependency_environment
     require_managed_container
     render_app_conf
-    generate_compose
-    mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data" "$CONF_DIR/data/${INSTANCE_NAME}_postgres_data"
+    render_compose
+    mkdir -p "$CONF_DIR/data/${INSTANCE_NAME}_data" "$CONF_DIR/data/${PARADEDB_INSTANCE_NAME}_data"
     compose pull
     compose up -d
-    echo "[SUCCESS] [Casdoor] App and PostgreSQL images updated; settings and persistent data were preserved."
+    echo "[SUCCESS] [Casdoor] App and ParadeDB images updated; settings and persistent data were preserved."
 }
 
 do_stop() {
     load_settings
+    validate_settings
+    load_dependency_environment
     require_managed_container
-    [ -f "$COMPOSE_FILE" ] || generate_compose
+    [ -f "$COMPOSE_FILE" ] || render_compose
     compose stop
 }
 
 do_rm() {
     load_settings
+    validate_settings
+    load_dependency_environment
     require_managed_container
-    [ -f "$COMPOSE_FILE" ] || generate_compose
+    [ -f "$COMPOSE_FILE" ] || render_compose
     compose down
 }
 
 do_purge() {
     do_rm
-    if [ -d "$CONF_DIR/data/${INSTANCE_NAME}_data" ] || [ -d "$CONF_DIR/data/${INSTANCE_NAME}_postgres_data" ]; then
+    if [ -d "$CONF_DIR/data/${INSTANCE_NAME}_data" ] || [ -d "$CONF_DIR/data/${PARADEDB_INSTANCE_NAME}_data" ]; then
         docker run --rm -v "$CONF_DIR/data:/purge" alpine rm -rf \
-            "/purge/${INSTANCE_NAME}_data" "/purge/${INSTANCE_NAME}_postgres_data"
+            "/purge/${INSTANCE_NAME}_data" "/purge/${PARADEDB_INSTANCE_NAME}_data"
     fi
-    echo "[SUCCESS] [Casdoor] App and PostgreSQL data purged; app.conf and settings were preserved."
+    echo "[SUCCESS] [Casdoor] App and ParadeDB data purged; settings were preserved."
 }
 
 do_reset() {
     do_purge
     rm -f -- "$CONF_FILE" "$COMPOSE_FILE"
+    local dependency_conf
+    dependency_conf="$(resolve_dependency_conf paradedb)"
+    case "$dependency_conf" in
+        "$CONF_DIR"/*) rm -f -- "$dependency_conf" "${dependency_conf%.conf}.compose.yaml" ;;
+    esac
     rm -rf -- "$CONF_DIR/data/${INSTANCE_NAME}_config"
     echo "[SUCCESS] [Casdoor] This instance's stack, persistent data and generated configuration were removed."
 }
@@ -247,22 +241,22 @@ Containers: {{range .Containers}}{{.Name}} {{end}}'
 
 do_help() {
     echo "Usage: $0 {init|start|up|update|stop|rm|purge|reset|network} [--conf PATH] [--name NAME]"
-    echo "  init       : Generate or complete bundled settings, YAML and data dirs; do not start containers"
-    echo "  start      : Render app.conf and YAML, then start Casdoor and PostgreSQL"
+    echo "  init       : Generate app/dependency settings, YAML and data dirs; do not start containers"
+    echo "  start      : Render app.conf and YAML, then start Casdoor and ParadeDB"
     echo "  up         : init + start for the bundled stack"
-    echo "  update     : Pull configured app and PostgreSQL images and apply them"
-    echo "  stop       : Stop this instance's Casdoor and PostgreSQL"
+    echo "  update     : Pull configured app and ParadeDB images and apply them"
+    echo "  stop       : Stop this instance's Casdoor and ParadeDB"
     echo "  rm         : Remove only this Compose project; preserve settings and bind mounts"
-    echo "  purge      : DANGER - rm and delete this instance's app and PostgreSQL data"
-    echo "  reset      : DANGER - purge and delete this instance's settings, YAML and generated config dir"
+    echo "  purge      : DANGER - rm and delete this instance's app and database data"
+    echo "  reset      : DANGER - purge and delete this instance's app/in-directory dependency settings and YAML"
     echo "  network ls : Inspect the configured network without modifying it"
-    echo "  --conf PATH: Settings path; YAML and data live relative to its directory"
-    echo "  --name NAME: Instance name written only when generating new settings"
+    echo "  --conf PATH: App settings path; dependency settings and data live beside it by default"
+    echo "  --name NAME: Instance name written only when generating new app settings"
 }
 
-# -----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 # 5. Command Dispatch
-# -----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 case "$COMMAND" in
     init)    do_init ;;
     start)   do_start ;;
