@@ -180,7 +180,7 @@ bash cli.sh prepare-data --conf /srv/lobe/settings_rustfs.conf \
 - 客户端源码仓库为 [rustfs/cli](https://github.com/rustfs/cli)，Docker 镜像为 `rustfs/rc:latest`，二进制为 `rc`；并非 `rustfs/rc` 源码仓库。
 - [官方 README](https://github.com/rustfs/cli/blob/main/README.md) 明确列出 `rc admin user add/info`、`rc admin policy create/info/attach` 和 `rc ready local --timeout 2`。`rc admin` 使用 RustFS Admin API，不能因 S3 兼容就替换成 MinIO 管理接口。
 - [官方镜像定义](https://github.com/rustfs/cli/blob/main/Dockerfile.release) 使用 Alpine，提供 `/bin/sh`、`rc`、`jq`，默认以非 root 用户运行。资源 hook 临时使用 `--user 0:0` 读取权限为 600 的策略文件、写入归属标记；RustFS 服务本身仍使用镜像默认用户。
-- 官方退出码约定为：`0` 成功、`3` 网络失败、`4` 权限失败、`5` 资源不存在、`6` 冲突、`7` 不支持。资源查询只将 `5` 视为可创建，其余错误直接返回，避免把鉴权或网络失败当作资源不存在。
+- 官方退出码约定为：`0` 成功、`3` 网络失败、`4` 权限失败、`5` 资源不存在、`6` 冲突、`7` 不支持。资源查询将 `5` 视为可创建；对 S3 Bucket 查询也识别客户端明确返回的 `Bucket not found:` 错误文本，因为部署中观察到该错误会使用其他非零状态码。其余错误仍直接返回，避免把鉴权或网络失败当作资源不存在。
 - 当前 hook 的顺序为等待就绪、核对同名资源、保存归属、创建缺项、绑定 Bucket 策略、用专用凭证访问 Bucket。标记包含 owner、Bucket、访问键和密码摘要；创建前落盘以支持中断续做，重复执行不修改已有用户密码。
 
 ```bash

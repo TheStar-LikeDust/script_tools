@@ -113,10 +113,10 @@ POLICY
 set -eu
 umask 077
 
-# rc exit code 5 means not found; other lookup failures must abort.
+# rc may use a generic status for a missing bucket; match that explicit error too.
 resource_exists() {
     if "$@" >/dev/null 2>/tmp/lookup-error; then return 0; else result=$?; fi
-    if [ "$result" -eq 5 ]; then return 1; fi
+    if [ "$result" -eq 5 ] || grep -Fqi 'Bucket not found:' /tmp/lookup-error; then return 1; fi
     cat /tmp/lookup-error >&2
     exit "$result"
 }
