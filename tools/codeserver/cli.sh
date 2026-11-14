@@ -1,222 +1,199 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# -----------------------------------------------------------------------------
-# 1. Initialization & Path Anchoring
-# -----------------------------------------------------------------------------
 COMMAND=${1:-help}
 shift || true
 
-# Parse instance settings and naming options.
 CONF_FILE=""
 NAME_OVERRIDE=""
-EXTRA_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
-        --conf) CONF_FILE="$2"; shift 2 ;;
-        --name) NAME_OVERRIDE="$2"; shift 2 ;;
-        *) EXTRA_ARGS+=("$1"); shift ;;
+        --conf)
+            [ $# -ge 2 ] || { echo "[ERROR] --conf requires a path." >&2; exit 2; }
+            [ -n "$2" ] || { echo "[ERROR] --conf requires a non-empty path." >&2; exit 2; }
+            CONF_FILE="$2"
+            shift 2
+            ;;
+        --name)
+            [ $# -ge 2 ] || { echo "[ERROR] --name requires a value." >&2; exit 2; }
+            [ -n "$2" ] || { echo "[ERROR] --name requires a non-empty value." >&2; exit 2; }
+            NAME_OVERRIDE="$2"
+            shift 2
+            ;;
+        *)
+            echo "[ERROR] Unknown option: $1" >&2
+            exit 2
+            ;;
     esac
 done
 
-# Anchor paths to this script's own location so it works from any cwd and survives moves
+if [ -n "$NAME_OVERRIDE" ] && [ "$COMMAND" != install ]; then
+    echo "[ERROR] --name is only valid with install." >&2
+    exit 2
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TPL_DIR="$SCRIPT_DIR/templates"
 CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_codeserver.conf}"
-# Config + data live together; data dir is derived from the config file's directory at runtime
-CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
-
-# -----------------------------------------------------------------------------
-# 2. Utility Functions
-# -----------------------------------------------------------------------------
-hr() { echo "-----------------------------------------------------------------------------"; }
+CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd -P)"
+CONF_FILE="$CONF_DIR/$(basename "$CONF_FILE")"
+SUDO=()
+[ "$(id -u)" -eq 0 ] || SUDO=(sudo)
 
 require_conf() {
     if [ ! -f "$CONF_FILE" ]; then
-        echo "[ERROR] [Code-Server] $CONF_FILE not found. Run 'bash cli.sh init' first."
+        echo "[ERROR] $CONF_FILE not found. Run 'bash cli.sh install' first." >&2
         exit 1
     fi
 }
 
-# -----------------------------------------------------------------------------
-# 3. Service Config Rendering
-# -----------------------------------------------------------------------------
-generate_settings() {
-    local pass=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 32)
-    local name="$NAME_OVERRIDE"
-    if [ -z "$name" ]; then
-        local ts=$(date +%s)
-        name="codeserver_${ts: -4}"
+load_conf() {
+    require_conf
+    set -a
+    source "$CONF_FILE"
+    set +a
+
+    if [[ ! "${SESSION_NAME:-}" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "[ERROR] SESSION_NAME contains unsupported characters." >&2
+        exit 1
     fi
 
+    for dir_name in "${CONFIG_DIR:-}" "${USER_DATA_DIR:-}"; do
+        case "$dir_name" in
+            ""|.|./|/*|..|../*|*/..|*/../*)
+                echo "[ERROR] CONFIG_DIR and USER_DATA_DIR must stay inside the settings directory." >&2
+                exit 1
+                ;;
+        esac
+    done
+
+    CONFIG_PATH="$(realpath -m "$CONF_DIR/${CONFIG_DIR#./}")"
+    USER_DATA_PATH="$(realpath -m "$CONF_DIR/${USER_DATA_DIR#./}")"
+    case "$CONFIG_PATH" in "$CONF_DIR"/*) ;; *) echo "[ERROR] CONFIG_DIR resolves outside the settings directory." >&2; exit 1 ;; esac
+    case "$USER_DATA_PATH" in "$CONF_DIR"/*) ;; *) echo "[ERROR] USER_DATA_DIR resolves outside the settings directory." >&2; exit 1 ;; esac
+    case "$CONFIG_PATH/" in "$USER_DATA_PATH/"*) echo "[ERROR] CONFIG_DIR and USER_DATA_DIR must not overlap." >&2; exit 1 ;; esac
+    case "$USER_DATA_PATH/" in "$CONFIG_PATH/"*) echo "[ERROR] CONFIG_DIR and USER_DATA_DIR must not overlap." >&2; exit 1 ;; esac
+
+    if [[ ! "${PORT:-}" =~ ^[0-9]{1,5}$ ]] || ((10#$PORT < 1 || 10#$PORT > 65535)); then
+        echo "[ERROR] PORT must be between 1 and 65535." >&2
+        exit 1
+    fi
+    [[ "${HOST:-}" =~ ^[a-zA-Z0-9:._-]+$ ]] || {
+        echo "[ERROR] HOST contains unsupported characters." >&2
+        exit 1
+    }
+}
+
+generate_settings() {
+    local name="$NAME_OVERRIDE"
+    if [ -z "$name" ]; then
+        local ts
+        ts="$(date +%s)"
+        name="codeserver_${ts: -4}"
+    fi
+    [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]] || {
+        echo "[ERROR] --name accepts only letters, numbers, '_' and '-'." >&2
+        exit 2
+    }
+
+    umask 077
     sed -e "s/codeserver_XXXX/${name}/g" \
-        -e "s/{{PASSWORD}}/${pass}/g" \
+        -e "s/{{PASSWORD}}/$(openssl rand -hex 16)/g" \
         "$TPL_DIR/settings_codeserver.conf.tpl" > "$CONF_FILE"
+    chmod 600 "$CONF_FILE"
 }
 
 generate_yaml() {
-    local abs_config_dir="${CONF_DIR}/${CONFIG_DIR#./}"
-    mkdir -p "$abs_config_dir"
-    
-    echo "Generating config.yaml..."
-    sed -e "s/{{HOST}}/${HOST:-127.0.0.1}/g" \
-        -e "s/{{PORT}}/${PORT:-8080}/g" \
+    umask 077
+    sed -e "s/{{HOST}}/${HOST}/g" \
+        -e "s/{{PORT}}/${PORT}/g" \
         -e "s/{{PASSWORD}}/${PASSWORD}/g" \
-        "$TPL_DIR/config.yaml.tpl" > "$abs_config_dir/config.yaml"
+        "$TPL_DIR/config.yaml.tpl" > "$CONFIG_PATH/config.yaml"
+    chmod 600 "$CONFIG_PATH/config.yaml"
 }
 
-# -----------------------------------------------------------------------------
-# 4. Lifecycle Functions (do_xxx)
-# -----------------------------------------------------------------------------
-do_init() {
-    hr
-    echo "[INFO] [Code-Server] Initializing configuration..."
-    hr
-
+do_install() {
+    if [ -n "$NAME_OVERRIDE" ] && [ -f "$CONF_FILE" ]; then
+        echo "[ERROR] --name only applies when install creates a new settings file." >&2
+        exit 2
+    fi
     if [ ! -f "$CONF_FILE" ]; then
         generate_settings
     fi
-    source "$CONF_FILE"
+    load_conf
+    chmod 600 "$CONF_FILE"
 
-    # Pre-create the data dir
-    local abs_config_dir="${CONF_DIR}/${CONFIG_DIR#./}"
-    local abs_user_data_dir="${CONF_DIR}/${USER_DATA_DIR#./}"
-    mkdir -p "$abs_config_dir" "$abs_user_data_dir"
-
-    # Install code-server if missing
-    if ! command -v code-server &> /dev/null; then
-        echo "[INFO] code-server is not installed. Running official installation script..."
+    if ! command -v tmux >/dev/null 2>&1 || ! command -v code-server >/dev/null 2>&1; then
+        "${SUDO[@]}" apt-get update -y
+    fi
+    if ! command -v tmux >/dev/null 2>&1; then
+        "${SUDO[@]}" apt-get install -y tmux
+    fi
+    if ! command -v code-server >/dev/null 2>&1; then
         curl -fsSL https://code-server.dev/install.sh | sh
     fi
 
-    hr
-    echo "[SUCCESS] [Code-Server] Initialization completed!"
-    hr
-    echo "[IMPORTANT] Recommended next steps:"
-    echo "  1. Review settings_codeserver.conf (port / credentials)"
-    echo "  2. Run 'bash cli.sh start' to start code-server in background via tmux"
-    hr
+    mkdir -p "$CONFIG_PATH" "$USER_DATA_PATH"
+    echo "[SUCCESS] Code-Server installed. Review $CONF_FILE, then run 'bash cli.sh start'."
 }
 
 do_start() {
-    require_conf
-    set -a; source "$CONF_FILE"; set +a
+    load_conf
+    command -v tmux >/dev/null 2>&1 || { echo "[ERROR] tmux is missing. Run 'bash cli.sh install'." >&2; exit 1; }
+    command -v code-server >/dev/null 2>&1 || { echo "[ERROR] code-server is missing. Run 'bash cli.sh install'." >&2; exit 1; }
 
-    if ! command -v tmux &> /dev/null; then
-        echo "[ERROR] tmux is not installed. Please install tmux first."
-        exit 1
-    fi
-    
     if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-        echo "[INFO] [Code-Server] Session '${SESSION_NAME}' already exists, skipping start."
-        echo "Use 'tmux attach -t $SESSION_NAME' to view it."
+        echo "[INFO] Session '$SESSION_NAME' is already running."
         return 0
     fi
 
-    local abs_config_dir="${CONF_DIR}/${CONFIG_DIR#./}"
-    local abs_user_data_dir="${CONF_DIR}/${USER_DATA_DIR#./}"
-    
-    mkdir -p "$abs_config_dir" "$abs_user_data_dir"
-    
-    # Generate config.yaml based on settings_codeserver.conf
+    mkdir -p "$CONFIG_PATH" "$USER_DATA_PATH"
     generate_yaml
-    
-    hr
-    echo "[INFO] [Code-Server] Starting service in Tmux (Session: ${SESSION_NAME})..."
-    hr
-
-    # Start code-server in tmux session
-    tmux new-session -d -s "$SESSION_NAME" "code-server --config \"$abs_config_dir/config.yaml\" --user-data-dir \"$abs_user_data_dir\""
-    
-    hr
-    echo "[SUCCESS] [Code-Server] Service is up and running in background!"
-    echo "Access URL: http://${HOST:-127.0.0.1}:$PORT"
-    echo "Password  : $PASSWORD"
-    echo "To view logs: tmux attach -t $SESSION_NAME"
-    hr
+    local command
+    printf -v command 'code-server --config %q --user-data-dir %q' \
+        "$CONFIG_PATH/config.yaml" "$USER_DATA_PATH"
+    tmux new-session -d -s "$SESSION_NAME" "$command"
+    echo "[SUCCESS] Code-Server started at http://${HOST}:${PORT}."
 }
 
 do_stop() {
-    require_conf
-    source "$CONF_FILE"
-    hr
-    echo "[INFO] [Code-Server] Stopping service..."
-    hr
-
-    if ! command -v tmux &> /dev/null; then
-        return 0
-    fi
-
-    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+    load_conf
+    if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
         tmux kill-session -t "$SESSION_NAME"
+        echo "[SUCCESS] Session '$SESSION_NAME' stopped."
+    else
+        echo "[INFO] Session '$SESSION_NAME' is not running."
     fi
 }
 
 do_rm() {
-    do_stop
-}
-
-do_purge() {
-    require_conf
-    source "$CONF_FILE"
-    hr
-    echo "[WARN] WARNING: Preparing to completely destroy Code-Server data!"
-    hr
-    
-    do_stop
-
-    # Clean up local data directory but preserve configs
-    local abs_config_dir="${CONF_DIR}/${CONFIG_DIR#./}"
-    local abs_user_data_dir="${CONF_DIR}/${USER_DATA_DIR#./}"
-    
-    if [ -d "$abs_config_dir" ] || [ -d "$abs_user_data_dir" ]; then
-        echo "Removing local data directory..."
-        # Host-level tool: data is owned by the current user, plain rm is enough.
-        # Do not silence errors so a failed delete is not reported as success.
-        rm -rf "$abs_config_dir"
-        rm -rf "$abs_user_data_dir"
+    if [ ! -f "$CONF_FILE" ]; then
+        echo "[INFO] No instance configuration found."
+        return 0
     fi
-
-    hr
-    echo "[SUCCESS] [Code-Server] Data has been purged (configs preserved)."
-    hr
-}
-
-do_reset() {
-    do_purge
-    echo "[INFO] [Code-Server] Removing all generated settings under this service..."
-    rm -f "$CONF_DIR"/settings*.conf
-    hr
-    echo "[SUCCESS] [Code-Server] Reset complete (restored to pristine source files)."
-    hr
+    load_conf
+    if command -v tmux >/dev/null 2>&1 && tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+        tmux kill-session -t "$SESSION_NAME"
+    fi
+    rm -f "$CONFIG_PATH/config.yaml" "$CONF_FILE"
+    echo "[SUCCESS] Instance settings and generated config removed; user data and software preserved."
 }
 
 do_help() {
-    echo "Usage: $0 {init|start|up|stop|rm|purge|reset} [--conf PATH] [--name NAME]"
-    echo "  init    : Generate missing settings and data directories; install code-server if absent"
-    echo "  start   : Start code-server in the background using tmux"
-    echo "  up      : Initialize config and start the service instantly"
-    echo "  stop    : Stop the running tmux session"
-    echo "  rm      : Equivalent to stop for host-level tools"
-    echo "  purge   : DANGER - Stop session AND permanently delete ./data (Preserves settings_codeserver.conf)"
-    echo "  reset   : DANGER - purge AND delete ALL settings (back to pristine source files)"
-    echo ""
-    echo "Options:"
-    echo "  --conf PATH : Config file location (default: <script_dir>/settings_codeserver.conf)."
-    echo "                Data dir is derived as <dir-of-conf>/data/..."
-    echo "  --name NAME : Full session name to write at init (default: auto 'codeserver_<ts>')."
+    echo "Usage: $0 {install|start|stop|rm} [--conf PATH] [--name NAME]"
+    echo "  install : Install code-server and tmux; create missing instance settings."
+    echo "  start   : Start the configured tmux session."
+    echo "  stop    : Stop the configured tmux session."
+    echo "  rm      : Stop and remove this instance's settings and generated config.yaml."
+    echo "  --conf  : Settings path (default: <script_dir>/settings_codeserver.conf)."
+    echo "  --name  : Instance name used when install creates settings."
 }
 
-# -----------------------------------------------------------------------------
-# 5. Command Dispatch
-# -----------------------------------------------------------------------------
 case "$COMMAND" in
-    init)    do_init ;;
+    install) do_install ;;
     start)   do_start ;;
-    up)      do_init && do_start ;;
     stop)    do_stop ;;
     rm)      do_rm ;;
-    purge)   do_purge ;;
-    reset)   do_reset ;;
-    *)       do_help ;;
+    help|-h|--help) do_help ;;
+    *) echo "[ERROR] Unknown command: $COMMAND" >&2; do_help; exit 2 ;;
 esac

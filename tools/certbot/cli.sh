@@ -1,22 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# -----------------------------------------------------------------------------
-# 1. Initialization
-# -----------------------------------------------------------------------------
 COMMAND=${1:-help}
 shift || true
 
-# Installing packages, writing certificates and binding port 80 need root.
-SUDO=""
-if [ "$(id -u)" -ne 0 ]; then
-    SUDO="sudo"
-fi
-
-# -----------------------------------------------------------------------------
-# 2. Utility Functions
-# -----------------------------------------------------------------------------
-hr() { echo "-----------------------------------------------------------------------------"; }
+SUDO=()
+[ "$(id -u)" -eq 0 ] || SUDO=(sudo)
 
 normalize_domain() {
     local domain="${1#*://}"
@@ -27,36 +16,27 @@ normalize_domain() {
     printf '%s' "${domain,,}"
 }
 
-# -----------------------------------------------------------------------------
-# 3. Lifecycle Functions (do_xxx)
-# -----------------------------------------------------------------------------
-do_start() {
-    # 1. Read the domain from the supplied domain or URL.
-    if [ "$#" -ne 1 ]; then
-        echo "Usage: $0 start <domain-or-url>" >&2
-        exit 2
+do_install() {
+    if ! command -v certbot >/dev/null 2>&1; then
+        "${SUDO[@]}" apt-get update -y
+        "${SUDO[@]}" apt-get install -y certbot
     fi
+    echo "[SUCCESS] Certbot is installed. Run 'bash cli.sh start <domain-or-url>' to request or renew a certificate."
+}
+
+do_start() {
+    [ "$#" -eq 1 ] || { echo "Usage: $0 start <domain-or-url>" >&2; exit 2; }
+    command -v certbot >/dev/null 2>&1 || { echo "[ERROR] Certbot is missing. Run 'bash cli.sh install'." >&2; exit 1; }
 
     local domain
-    domain=$(normalize_domain "$1")
-    if [ -z "$domain" ]; then
-        echo "[ERROR] A domain name is required." >&2
+    domain="$(normalize_domain "$1")"
+    [[ "$domain" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] || {
+        echo "[ERROR] A valid fully-qualified domain name is required." >&2
         exit 2
-    fi
+    }
 
-    # 2. Install Certbot if missing.
-    hr
-    echo "[INFO] [Certbot] Preparing certificate for ${domain}..."
-    hr
-
-    if ! command -v certbot >/dev/null 2>&1; then
-        echo "[INFO] [Certbot] certbot not installed, installing via apt-get..."
-        $SUDO apt-get update -y
-        $SUDO apt-get install -y certbot
-    fi
-
-    # 3. Obtain or renew the certificate, keeping it when renewal is not due.
-    $SUDO certbot certonly \
+    echo "[INFO] Requesting or renewing certificate for $domain..."
+    "${SUDO[@]}" certbot certonly \
         --standalone \
         --preferred-challenges http \
         --server https://acme-v02.api.letsencrypt.org/directory \
@@ -67,25 +47,21 @@ do_start() {
         --cert-name "$domain" \
         -d "$domain"
 
-    # 4. Show the files to use in the HTTPS service.
-    hr
-    echo "[SUCCESS] [Certbot] Certificate is ready."
+    echo "[SUCCESS] Certificate is ready."
     echo "Certificate : /etc/letsencrypt/live/${domain}/fullchain.pem"
     echo "Private key : /etc/letsencrypt/live/${domain}/privkey.pem"
-    hr
 }
 
 do_help() {
-    echo "Usage: $0 start <domain-or-url>"
-    echo "  start : Install Certbot if missing, then obtain or renew a Let's Encrypt certificate"
-    echo "  Requires: apt-get for installation, root or sudo, and a publicly reachable free TCP port 80"
+    echo "Usage: $0 {install|start <domain-or-url>}"
+    echo "  install : Install Certbot."
+    echo "  start   : Request or renew a certificate; Certbot is a one-shot tool, not a running service."
+    echo "  HTTP-01 requires a publicly reachable TCP port 80 that is not occupied during validation."
 }
 
-# -----------------------------------------------------------------------------
-# 4. Command Dispatch
-# -----------------------------------------------------------------------------
 case "$COMMAND" in
+    install) [ $# -eq 0 ] || { echo "[ERROR] install accepts no arguments." >&2; exit 2; }; do_install ;;
     start) do_start "$@" ;;
-    help|-h|--help) do_help ;;
-    *) do_help; exit 2 ;;
+    help|-h|--help) [ $# -eq 0 ] || { echo "[ERROR] Help accepts no arguments." >&2; exit 2; }; do_help ;;
+    *) echo "[ERROR] Unknown command: $COMMAND" >&2; do_help; exit 2 ;;
 esac

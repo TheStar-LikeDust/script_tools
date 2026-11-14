@@ -2,63 +2,41 @@
 
 ## 1. 简介
 
-> 使用 Certbot 通过 Let's Encrypt 为域名申请 TLS 证书。
+> 使用 Certbot 通过 Let's Encrypt 为域名申请或续期 TLS 证书。
 
-`start` 自动安装缺失的 Certbot，再通过 HTTP-01 验证申请证书并输出证书与私钥路径；域名需解析到当前服务器，且公网 TCP 80 可访问。
+Certbot 是一次性命令行工具，不是常驻服务，因此只提供 `install` 与 `start`：前者安装软件，后者执行证书申请或续期。
 
 ## 2. 核心配置项
 
-无需配置文件。`start` 接收一个域名或完整网址，自动提取域名；证书保存在 `/etc/letsencrypt/live/<域名>/`。
+无需实例配置文件。`start` 接收一个域名或完整网址；证书保存在 `/etc/letsencrypt/live/<域名>/`。
 
 ## 3. 备注
 
-- 自动安装使用 `apt-get`，适用于 Debian/Ubuntu；已安装 Certbot 时跳过安装。
-- 安装依赖、写入证书和监听 TCP 80 需要 root 权限；普通用户自动通过 `sudo` 执行，可能提示输入 sudo 密码。
-- 申请使用非交互模式，接受服务条款并以无邮箱方式注册；脚本不配置续期任务。
-- 重复执行 `start` 会复用未到续期时间的证书，需要续期时重新签发。
-- standalone 验证会临时监听 TCP 80；如果 Nginx 已占用该端口，申请前需先停止 Nginx。
-- 证书文件为 `fullchain.pem`，私钥文件为 `privkey.pem`。
-- 续期时 HTTP-01 验证仍需公网 TCP 80 可访问且未被其他进程占用。
+- 安装使用 `apt-get`，适用于 Debian/Ubuntu；普通用户通过 `sudo` 执行。
+- 申请使用 HTTP-01 standalone 验证，需要域名解析到当前服务器且公网 TCP 80 可访问、未被其他进程占用。
+- 命令接受 Let's Encrypt 服务条款并以无邮箱方式注册；已安装的 Certbot 可配合系统续期 timer，脚本本身不创建续期任务。
+- 此工具不提供 `stop/rm`，不删除证书或卸载系统软件。
 
 ## 4. 快速执行
 
 ```bash
 cd tools/certbot
+bash cli.sh install
 bash cli.sh start https://example.com
-```
-
-也可直接传入域名：
-
-```bash
-bash cli.sh start example.com
 ```
 
 ## 5. 命令解释
 
+#### install
+
+安装缺失的 Certbot 软件包，不申请证书。
+
 #### start
 
-依次安装缺失的 Certbot、申请或续期域名证书、显示证书与私钥路径。以下为 CLI 内部调用，`domain` 来自输入网址的域名部分，`SUDO` 在普通用户下为 `sudo`，root 下为空。
-
-```bash
-if ! command -v certbot >/dev/null 2>&1; then
-    $SUDO apt-get update -y
-    $SUDO apt-get install -y certbot
-fi
-
-$SUDO certbot certonly \
-    --standalone \
-    --preferred-challenges http \
-    --server https://acme-v02.api.letsencrypt.org/directory \
-    --non-interactive \
-    --agree-tos \
-    --register-unsafely-without-email \
-    --keep-until-expiring \
-    --cert-name "$domain" \
-    -d "$domain"
-```
+通过 HTTP-01 standalone 验证申请或续期指定域名，并输出证书和私钥路径。首次申请和续期前均要求公网 TCP 80 可用。
 
 ## 6. 其他补充
 
-- 证书路径：`/etc/letsencrypt/live/<域名>/fullchain.pem`
-- 私钥路径：`/etc/letsencrypt/live/<域名>/privkey.pem`
-- 证书由宿主机管理，不保存在本工具目录；备份应保存 `/etc/letsencrypt` 中的证书、私钥、链接目标和续期配置。
+- 证书路径：`/etc/letsencrypt/live/<域名>/fullchain.pem`。
+- 私钥路径：`/etc/letsencrypt/live/<域名>/privkey.pem`。
+- 证书与续期配置由宿主机管理；备份时保存 `/etc/letsencrypt` 的证书、私钥、链接目标和续期配置。

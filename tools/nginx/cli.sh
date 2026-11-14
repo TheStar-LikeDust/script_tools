@@ -1,148 +1,224 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# -----------------------------------------------------------------------------
-# 1. Initialization & Path Anchoring
-# -----------------------------------------------------------------------------
 COMMAND=${1:-help}
 shift || true
 
-# Parse instance settings and naming options.
 CONF_FILE=""
 NAME_OVERRIDE=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        --conf) CONF_FILE="$2"; shift 2 ;;
-        --name) NAME_OVERRIDE="$2"; shift 2 ;;
-        *) shift ;;
+        --conf)
+            [ $# -ge 2 ] || { echo "[ERROR] --conf requires a path." >&2; exit 2; }
+            [ -n "$2" ] || { echo "[ERROR] --conf requires a non-empty path." >&2; exit 2; }
+            CONF_FILE="$2"
+            shift 2
+            ;;
+        --name)
+            [ $# -ge 2 ] || { echo "[ERROR] --name requires a value." >&2; exit 2; }
+            [ -n "$2" ] || { echo "[ERROR] --name requires a non-empty value." >&2; exit 2; }
+            NAME_OVERRIDE="$2"
+            shift 2
+            ;;
+        *)
+            echo "[ERROR] Unknown option: $1" >&2
+            exit 2
+            ;;
     esac
 done
+
+if [ -n "$NAME_OVERRIDE" ] && [ "$COMMAND" != install ]; then
+    echo "[ERROR] --name is only valid with install." >&2
+    exit 2
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TPL_DIR="$SCRIPT_DIR/templates"
 CONF_FILE="${CONF_FILE:-$SCRIPT_DIR/settings_nginx.conf}"
-CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd)"
+CONF_DIR="$(cd "$(dirname "$CONF_FILE")" && pwd -P)"
+CONF_FILE="$CONF_DIR/$(basename "$CONF_FILE")"
 CONFD_DIR="/etc/nginx/conf.d"
-# Writing into /etc/nginx and ufw needs root; fall back to sudo for non-root callers
-SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
+SUDO=()
+[ "$(id -u)" -eq 0 ] || SUDO=(sudo)
 
-# -----------------------------------------------------------------------------
-# 2. Utility Functions
-# -----------------------------------------------------------------------------
-hr() { echo "-----------------------------------------------------------------------------"; }
+require_conf() {
+    if [ ! -f "$CONF_FILE" ]; then
+        echo "[ERROR] $CONF_FILE not found. Run 'bash cli.sh install' first." >&2
+        exit 1
+    fi
+}
 
-# -----------------------------------------------------------------------------
-# 3. Service Config Rendering
-# -----------------------------------------------------------------------------
 generate_settings() {
     local name="$NAME_OVERRIDE"
     if [ -z "$name" ]; then
-        local ts=$(date +%s)
+        local ts
+        ts="$(date +%s)"
         name="nginx_${ts: -4}"
     fi
-    sed -e "s/nginx_XXXX/${name}/g" \
-        "$TPL_DIR/settings_nginx.conf.tpl" > "$CONF_FILE"
+    [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]] || {
+        echo "[ERROR] --name accepts only letters, numbers, '_' and '-'." >&2
+        exit 2
+    }
+    umask 077
+    sed "s/nginx_XXXX/${name}/g" "$TPL_DIR/settings_nginx.conf.tpl" > "$CONF_FILE"
+    chmod 600 "$CONF_FILE"
 }
 
-# Render the nginx server block into the service's own data dir (sandbox-friendly).
-# Echoes the rendered file's absolute path.
+load_conf() {
+    require_conf
+    set -a
+    source "$CONF_FILE"
+    set +a
+
+    [[ "${INSTANCE_NAME:-}" =~ ^[a-zA-Z0-9_-]+$ ]] || {
+        echo "[ERROR] INSTANCE_NAME contains unsupported characters." >&2
+        exit 1
+    }
+    [[ "${SERVER_NAME:-}" =~ ^[a-zA-Z0-9._*-]+$ ]] || {
+        echo "[ERROR] SERVER_NAME contains unsupported characters." >&2
+        exit 1
+    }
+    for port in "${LISTEN_PORT:-}" "${UPSTREAM_PORT:-}"; do
+        [[ "$port" =~ ^[0-9]{1,5}$ ]] && ((10#$port >= 1 && 10#$port <= 65535)) || {
+            echo "[ERROR] Nginx ports must be between 1 and 65535." >&2
+            exit 1
+        }
+    done
+    [[ "${ALLOW_PREFIX:-}" =~ ^/[a-zA-Z0-9/_-]*/$ ]] || {
+        echo "[ERROR] ALLOW_PREFIX must be a path prefix ending in '/'." >&2
+        exit 1
+    }
+
+    SITE_DIR="$(realpath -m "$CONF_DIR/data/${INSTANCE_NAME}_config")"
+    SITE_LINK="$CONFD_DIR/${INSTANCE_NAME}.conf"
+}
+
 render_site() {
-    local site_dir="$CONF_DIR/data/${INSTANCE_NAME}_config"
-    mkdir -p "$site_dir"
-    # ALLOW_PREFIX contains '/', so use '#' as the sed delimiter for that one
+    local site_file
+    mkdir -p "$SITE_DIR"
+    site_file="$(mktemp "$SITE_DIR/site.conf.XXXXXX")"
     sed -e "s/{{LISTEN_PORT}}/${LISTEN_PORT}/g" \
         -e "s/{{SERVER_NAME}}/${SERVER_NAME}/g" \
         -e "s/{{UPSTREAM_PORT}}/${UPSTREAM_PORT}/g" \
         -e "s#{{ALLOW_PREFIX}}#${ALLOW_PREFIX}#g" \
-        "$TPL_DIR/site.conf.tpl" > "$site_dir/site.conf"
-    echo "$site_dir/site.conf"
+        "$TPL_DIR/site.conf.tpl" > "$site_file"
+    printf '%s' "$site_file"
 }
 
-# -----------------------------------------------------------------------------
-# 4. Lifecycle Functions (do_xxx)
-# -----------------------------------------------------------------------------
-do_start() {
-    if [ ! -f "$CONF_FILE" ]; then
-        hr
-        echo "[INFO] [Nginx] settings_nginx.conf not found, generating defaults..."
-        generate_settings
-        hr
-        echo "[IMPORTANT] Review $CONF_FILE then re-run 'start':"
-        echo "  - SERVER_NAME   : your domain (or _)"
-        echo "  - LISTEN_PORT   : public port nginx listens on"
-        echo "  - UPSTREAM_PORT : the app's host port to proxy (e.g. newapi NEWAPI_PORT)"
-        echo "  - ALLOW_PREFIX  : the only public path prefix (default /v1/)"
-        hr
-        exit 0
+check_site_link() {
+    if [ -e "$SITE_LINK" ] || [ -L "$SITE_LINK" ]; then
+        if [ ! -L "$SITE_LINK" ]; then
+            echo "[ERROR] Refusing to replace non-symlink site: $SITE_LINK" >&2
+            return 1
+        fi
+        local target
+        target="$(readlink -f "$SITE_LINK" 2>/dev/null || true)"
+        case "$target" in
+            "$SITE_DIR/site.conf"|"$SITE_DIR"/site.conf.*) ;;
+            *) echo "[ERROR] Refusing to manage a site link not owned by this instance: $SITE_LINK" >&2; return 1 ;;
+        esac
     fi
-    set -a; source "$CONF_FILE"; set +a
+}
 
-    if ! command -v nginx >/dev/null 2>&1; then
-        echo "[INFO] [Nginx] nginx not installed, installing via apt-get..."
-        $SUDO apt-get update -y
-        $SUDO apt-get install -y nginx
-    fi
-
-    local site_file
-    site_file=$(render_site)
-    local link="$CONFD_DIR/${INSTANCE_NAME}.conf"
-
-    hr
-    echo "[INFO] [Nginx] Deploying gateway site '${INSTANCE_NAME}'..."
-    hr
-    $SUDO ln -sf "$site_file" "$link"
-    if $SUDO nginx -t; then
-        $SUDO systemctl reload nginx
+restore_site_link() {
+    local old_target="$1"
+    if [ -n "$old_target" ]; then
+        "${SUDO[@]}" ln -sfnT "$old_target" "$SITE_LINK"
     else
-        echo "[ERROR] [Nginx] config test failed; removing the broken site link."
-        $SUDO rm -f "$link"
+        "${SUDO[@]}" rm -f "$SITE_LINK"
+    fi
+}
+
+do_install() {
+    if [ -n "$NAME_OVERRIDE" ] && [[ ! "$NAME_OVERRIDE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "[ERROR] --name accepts only letters, numbers, '_' and '-'." >&2
+        exit 2
+    fi
+    if [ -n "$NAME_OVERRIDE" ] && [ -f "$CONF_FILE" ]; then
+        echo "[ERROR] --name only applies when install creates a new settings file." >&2
+        exit 2
+    fi
+    if ! command -v nginx >/dev/null 2>&1; then
+        "${SUDO[@]}" apt-get update -y
+        "${SUDO[@]}" apt-get install -y nginx
+    fi
+    if [ ! -f "$CONF_FILE" ]; then
+        generate_settings
+    fi
+    echo "[SUCCESS] Nginx installed. Review $CONF_FILE, then run 'bash cli.sh start'."
+}
+
+do_start() {
+    load_conf
+    command -v nginx >/dev/null 2>&1 || { echo "[ERROR] Nginx is missing. Run 'bash cli.sh install'." >&2; exit 1; }
+    check_site_link
+
+    local site_file old_target=""
+    site_file="$(render_site)"
+    if [ -L "$SITE_LINK" ]; then
+        old_target="$(readlink -f "$SITE_LINK")"
+    fi
+
+    "${SUDO[@]}" ln -sfnT "$site_file" "$SITE_LINK"
+    if ! "${SUDO[@]}" nginx -t; then
+        restore_site_link "$old_target"
+        rm -f "$site_file"
+        exit 1
+    fi
+    if ! "${SUDO[@]}" systemctl reload nginx; then
+        restore_site_link "$old_target"
+        "${SUDO[@]}" nginx -t && "${SUDO[@]}" systemctl reload nginx || true
+        rm -f "$site_file"
         exit 1
     fi
 
-    $SUDO ufw allow "${LISTEN_PORT}/tcp" || true
-
-    hr
-    echo "[SUCCESS] [Nginx] Gateway is up."
-    echo "Public : http://${SERVER_NAME}:${LISTEN_PORT}${ALLOW_PREFIX} (only this prefix; others 404)"
-    echo "Admin  : upstream is NOT public; reach the management UI via an SSH tunnel:"
-    echo "         ssh -L ${UPSTREAM_PORT}:127.0.0.1:${UPSTREAM_PORT} <user>@<server>"
-    echo "         then open http://localhost:${UPSTREAM_PORT}"
-    hr
+    if [ -n "$old_target" ] && [ "$old_target" != "$site_file" ]; then
+        rm -f "$old_target"
+    fi
+    echo "[SUCCESS] Gateway '$INSTANCE_NAME' started at http://${SERVER_NAME}:${LISTEN_PORT}${ALLOW_PREFIX}."
+    echo "[INFO] Firewall rules are managed separately; this tool does not change UFW rules."
 }
 
 do_stop() {
-    if [ ! -f "$CONF_FILE" ]; then
-        echo "[ERROR] [Nginx] $CONF_FILE not found. Nothing to take down."
-        exit 1
+    load_conf
+    check_site_link
+    if [ -L "$SITE_LINK" ]; then
+        "${SUDO[@]}" rm -f "$SITE_LINK"
+        "${SUDO[@]}" systemctl reload nginx
     fi
-    set -a; source "$CONF_FILE"; set +a
+    echo "[SUCCESS] Gateway '$INSTANCE_NAME' stopped; settings preserved."
+}
 
-    local link="$CONFD_DIR/${INSTANCE_NAME}.conf"
-    hr
-    echo "[INFO] [Nginx] Taking down gateway site '${INSTANCE_NAME}'..."
-    hr
-    if [ -e "$link" ] || [ -L "$link" ]; then
-        $SUDO rm -f "$link"
-        $SUDO systemctl reload nginx || true
+do_rm() {
+    if [ ! -f "$CONF_FILE" ]; then
+        echo "[INFO] No instance configuration found."
+        return 0
     fi
-    $SUDO ufw delete allow "${LISTEN_PORT}/tcp" || true
-    hr
-    echo "[SUCCESS] [Nginx] Gateway is down (settings_nginx.conf preserved)."
-    hr
+    load_conf
+    check_site_link
+    if [ -L "$SITE_LINK" ]; then
+        "${SUDO[@]}" rm -f "$SITE_LINK"
+        "${SUDO[@]}" systemctl reload nginx
+    fi
+    rm -f "$SITE_DIR/site.conf" "$SITE_DIR"/site.conf.* "$CONF_FILE"
+    echo "[SUCCESS] Instance settings and generated site configuration removed; Nginx package preserved."
 }
 
 do_help() {
-    echo "Usage: $0 {start|stop} [--conf PATH] [--name NAME]"
-    echo "  start : Generate settings_nginx.conf on first run; render site, link into nginx conf.d,"
-    echo "          reload nginx, and 'ufw allow' the listen port"
-    echo "  stop  : Remove the site from conf.d, reload nginx, and 'ufw delete allow' the port"
+    echo "Usage: $0 {install|start|stop|rm} [--conf PATH] [--name NAME]"
+    echo "  install : Install Nginx and create missing instance settings."
+    echo "  start   : Render, validate and enable this instance's site."
+    echo "  stop    : Disable this instance's site and preserve settings."
+    echo "  rm      : Stop and remove this instance's settings and generated site config."
+    echo "  --conf  : Settings path (default: <script_dir>/settings_nginx.conf)."
+    echo "  --name  : Instance name used when install creates settings."
 }
 
-# -----------------------------------------------------------------------------
-# 5. Command Dispatch
-# -----------------------------------------------------------------------------
 case "$COMMAND" in
-    start) do_start ;;
-    stop)  do_stop ;;
-    *)     do_help ;;
+    install) do_install ;;
+    start)   do_start ;;
+    stop)    do_stop ;;
+    rm)      do_rm ;;
+    help|-h|--help) do_help ;;
+    *) echo "[ERROR] Unknown command: $COMMAND" >&2; do_help; exit 2 ;;
 esac

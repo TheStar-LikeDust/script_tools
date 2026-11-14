@@ -12,15 +12,11 @@
 
 - `deploy_services/`：ParadeDB、Redis、RustFS，统一维护服务配置、凭证、Compose 片段与连接信息，同时支持独立部署。
 - `deploy_apps/`：Casdoor、New API、Sub2API、LobeHub（目录名 `lobechat`）调用服务接口组合默认依赖。Open WebUI 默认使用 SQLite 和本地存储。
-- `tools/`：宿主机工具，包括 code-server、nginx、certbot 和 Docker 防火墙配置，各用自己的命令接口。
+- `tools/`：宿主机工具，包括 code-server、nginx、certbot 和 Docker 防火墙配置，按工具提供 `install/start/stop/rm`；一次性运行的 Certbot 不提供 `stop/rm`。
 
 ## 设计文档
 
-修改代码或新增服务前，请阅读：
-
-- [服务设计](docs/design/core.md)：目录与数据归属、Compose 配置注入、共享网络和实例隔离。
-- [命令规范](docs/design/command.md)：生命周期命令、`update`、薄 CLI 与清理边界。
-- [服务文档规范](docs/design/document.md)：各服务说明的结构与内容要求。
+修改代码或新增服务前，请阅读[设计文档](docs/design.md)，其中包含服务架构、命令规范和服务文档结构。所有部署说明见[文档分类](docs/category.md)。
 
 ## 部署流程
 
@@ -58,7 +54,7 @@ LobeHub 的 `APP_URL` 默认使用 `http://localhost:<LOBECHAT_PORT>`，`S3_ENDP
 
 - 基础服务：[ParadeDB](docs/deploy_services/paradedb.md)、[Redis](docs/deploy_services/redis.md)、[RustFS](docs/deploy_services/rustfs.md)。
 - 应用：[Casdoor](docs/deploy_apps/casdoor.md)、[LobeHub](docs/deploy_apps/lobechat.md)、[New API](docs/deploy_apps/newapi.md)、[Open WebUI](docs/deploy_apps/openwebui.md)、[Sub2API](docs/deploy_apps/sub2api.md)。
-- 宿主机工具：[code-server](docs/tools/codeserver.md)、[Nginx](docs/tools/nginx.md)、[Certbot](docs/tools/certbot.md)、[Docker 防火墙](docs/tools/docker-setup.md)。
+- 宿主机工具：[code-server](docs/tools/codeserver.md)、[Nginx](docs/tools/nginx.md)、[Certbot](docs/tools/certbot.md)、[Docker 防火墙](docs/tools/docker-setup.md)。工具的 `rm` 只清除自身实例配置，不卸载软件；Certbot 为一次性命令，只提供 `install/start`。
 
 ## 常用管理命令
 
