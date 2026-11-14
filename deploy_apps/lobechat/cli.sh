@@ -127,7 +127,7 @@ complete_settings() {
             APP_URL) value="${INIT_VALUES[APP_URL]-http://localhost:$LOBECHAT_PORT}" ;;
             AUTH_ALLOWED_EMAILS)
                 value="${INIT_VALUES[AUTH_ALLOWED_EMAILS]-}"
-                [ -n "$value" ] || value="admin-$(openssl rand -hex 16)@example.invalid"
+                [ -n "$value" ] || value="admin-$(openssl rand -hex 4)@example.invalid"
                 ;;
         esac
         save_setting "$key" "$value" || return
