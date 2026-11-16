@@ -12,7 +12,7 @@
 
 路径锚定：`SCRIPT_DIR` 是 CLI 所在目录，用于定位 templates 和可选 hooks；`CONF_DIR` 是 settings 所在目录，用于定位生成 YAML 和本实例数据，默认等于 `SCRIPT_DIR`。Compose 使用 `CONF_DIR` 作为项目目录，数据挂载采用相对路径。`--conf` 可指定其他位置，其父目录须预先存在。
 
-命令边界：八个 Compose 部署均支持 `init/start/up/update/stop/rm/purge/reset`，五个应用另提供只读 `network ls`。三个基础服务提供只读 `render/env`；RustFS 还提供 `prepare-data/resource-init`。宿主机工具使用 `install/start/stop/rm` 管理软件、运行态和本工具生成的配置；`rm` 不卸载软件且保留用户数据。Certbot 是一次性命令，仅提供 `install/start`。
+命令边界：八个 Compose 部署均支持 `init/start/up/update/stop/rm/purge/reset`，五个应用另提供只读 `network ls`。三个基础服务提供只读 `render/env`；RustFS 还提供 `prepare-data/resource-init`。宿主机工具以 `install` 安装软件，以 `init` 生成 settings（仅 Code-Server 与 Nginx 需要），并以 `start/stop/rm` 管理运行态和本工具生成的配置；`rm` 不卸载软件且保留用户数据。Certbot 是一次性命令，仅提供 `install/start`。
 
 源文件与生成物的区分：
 
@@ -27,7 +27,7 @@
 
 - `deploy_services/`：ParadeDB、RustFS、Redis 各自维护配置、凭证、Compose 片段和连接信息，同时支持独立部署和应用组合。
 - `deploy_apps/`：四个应用复用服务接口默认部署专属依赖，父 Compose 项目统一管理。Casdoor 使用 PostgreSQL，New API、Sub2API 使用 PostgreSQL 与 Redis，LobeHub 另加 RustFS。Open WebUI 保留本地 SQLite 和现有手工外接配置。
-- `tools/`：宿主机工具，包括 code-server、Nginx、Certbot 和 Docker 防火墙配置。常驻工具使用 `install/start/stop/rm`；Certbot 只使用 `install/start`。`rm` 删除本工具实例配置，不卸载系统软件或删除用户数据。Docker 防火墙规则由本地 CLI 写入 UFW 配置，不下载外部脚本。具体命令和清理范围见各工具说明。
+- `tools/`：宿主机工具，包括 code-server、Nginx、Certbot 和 Docker 防火墙配置。Code-Server 与 Nginx 使用 `init` 生成 settings，并用 `install` 安装软件；其他工具只提供所需命令。`rm` 删除本工具实例配置，不卸载系统软件或删除用户数据。Docker 防火墙规则由本地 CLI 写入 UFW 配置，不下载外部脚本。具体命令和清理范围见各工具说明。
 
 ### 3. 编排方式：Compose 与薄 CLI
 
@@ -103,7 +103,7 @@ LobeHub 的 `APP_URL` 默认由 `LOBECHAT_PORT` 生成 localhost 地址，初始
 
 ## 命令设计理念 (CLI Command Design)
 
-本文件说明各服务目录下 cli.sh 的命令规范、文件职责分层与设计原因。`deploy_services/` 与 `deploy_apps/` 下的服务遵循统一的命令集、文件分层与行为约定。常驻宿主机工具使用 `install/start/stop/rm`；`rm` 只删除自身生成配置，不清理用户数据或卸载软件。Certbot 是一次性命令，只提供 `install/start`。
+本文件说明各服务目录下 cli.sh 的命令规范、文件职责分层与设计原因。`deploy_services/` 与 `deploy_apps/` 下的服务遵循统一的命令集、文件分层与行为约定。常驻宿主机工具使用 `install/init/start/stop/rm`；需要实例 settings 的工具以 `init` 生成配置，`install` 只安装软件；`rm` 只删除自身生成配置，不清理用户数据或卸载软件。Certbot 是一次性命令，只提供 `install/start`。
 
 ### 1. 设计思路
 

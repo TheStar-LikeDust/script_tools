@@ -4,7 +4,7 @@
 
 > 宿主机级别的反向代理网关，将上游应用按白名单路径前缀暴露。
 
-`install` 安装 Nginx 并生成缺失的实例 settings；`start/stop` 部署或撤下本站点；`rm` 额外删除本站点 settings 和生成配置。脚本只管理链接到本实例生成目录的站点，不改动 UFW 规则。
+`init` 生成实例 settings；`install` 安装 Nginx；`start/stop` 部署或撤下本站点；`rm` 额外删除本站点 settings 和生成配置。脚本只管理链接到本实例生成目录的站点，不改动 UFW 规则。
 
 ## 2. 核心配置项
 
@@ -22,13 +22,14 @@
 - `start` 先生成独立站点配置，再运行 `nginx -t`；检查失败或 reload 失败时恢复原有的本站点链接。
 - 若目标站点名已由普通文件或其他链接占用，脚本拒绝覆盖或删除。
 - UFW 规则由管理员或 Docker 防火墙工具单独管理。`stop/rm` 不会删除端口规则，避免影响其他服务。
-- `--conf PATH` 的父目录须已存在；`--name NAME` 只在首次 `install` 生成 settings 时生效。
+- `--conf PATH` 的父目录须已存在；`--name NAME` 只在首次 `init` 生成 settings 时生效。
 
 ## 4. 快速执行
 
 ```bash
 cd tools/nginx
-bash cli.sh install --name nginx_main
+bash cli.sh install
+bash cli.sh init --name nginx_main
 # Review settings_nginx.conf and set the upstream and public path.
 bash cli.sh start
 bash cli.sh stop
@@ -37,9 +38,13 @@ bash cli.sh rm
 
 ## 5. 命令解释
 
+#### init
+
+在 settings 不存在时生成实例配置；不安装软件，也不部署站点。
+
 #### install
 
-安装 Nginx，并在 settings 不存在时生成实例配置；不部署站点。
+安装 Nginx，不生成或修改 settings。
 
 #### start
 

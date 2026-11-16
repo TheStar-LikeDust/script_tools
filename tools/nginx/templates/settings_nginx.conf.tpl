@@ -1,6 +1,6 @@
 # Nginx Gateway Settings
 
-# Site config filename in nginx conf.d (auto-generated on install)
+# Site config filename in nginx conf.d (auto-generated on init)
 INSTANCE_NAME="nginx_XXXX"
 
 # Public hostname; _ is a placeholder, not a wildcard or default_server directive.

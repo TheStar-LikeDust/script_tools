@@ -4,7 +4,7 @@
 
 > 宿主机级别的网页端 VSCode 环境，通过 tmux 在后台运行。
 
-`install` 安装 code-server 与 tmux 并创建缺失的实例配置；`start/stop` 管理对应 tmux 会话；`rm` 只删除本实例设置和脚本生成的 `config.yaml`，保留用户数据和已安装软件。
+`init` 生成实例 settings；`install` 安装 code-server 与 tmux；`start/stop` 管理对应 tmux 会话；`rm` 只删除本实例设置和脚本生成的 `config.yaml`，保留用户数据和已安装软件。
 
 ## 2. 核心配置项
 
@@ -24,7 +24,7 @@
 - settings 与生成的 `config.yaml` 使用仅当前用户可读写的权限，文件中包含登录密码。
 - 配置路径中的绝对路径和 `..` 路径会被拒绝，避免清理越出实例目录。
 - `CONFIG_DIR` 与 `USER_DATA_DIR` 不可重叠，避免 `rm` 清理生成配置时触及用户数据。
-- `--conf PATH` 的父目录须已存在；`--name NAME` 仅在 `install` 首次生成 settings 时生效。
+- `--conf PATH` 的父目录须已存在；`--name NAME` 仅在 `init` 首次生成 settings 时生效。
 - `rm` 删除当前 `--conf` 指向的 settings 和 `CONFIG_DIR/config.yaml`，保留 `USER_DATA_DIR`、其他配置文件和宿主机软件。
 
 ## 4. 快速执行
@@ -32,6 +32,7 @@
 ```bash
 cd tools/codeserver
 bash cli.sh install
+bash cli.sh init --name codeserver_main
 # Review settings_codeserver.conf.
 bash cli.sh start
 bash cli.sh stop
@@ -41,9 +42,13 @@ bash cli.sh rm
 
 ## 5. 命令解释
 
+#### init
+
+在 settings 不存在时生成随机密码和实例名。已有 settings 不会被覆盖；该命令不安装软件。
+
 #### install
 
-安装 code-server 与 tmux，并在 settings 不存在时生成随机密码和实例名。已有 settings 不会被覆盖。
+安装 code-server 与 tmux，不生成或修改 settings。
 
 #### start
 
@@ -59,4 +64,4 @@ bash cli.sh rm
 
 ## 6. 复制恢复
 
-迁移时停止会话并复制脚本、templates、settings 及 `USER_DATA_DIR`。目标机运行 `install` 准备软件，再运行 `start` 生成 `config.yaml` 并恢复服务。
+迁移时停止会话并复制脚本、templates、settings 及 `USER_DATA_DIR`。目标机运行 `install` 准备软件；缺少 settings 时运行 `init`，再运行 `start` 生成 `config.yaml` 并恢复服务。

@@ -12,7 +12,7 @@
 
 - `deploy_services/`：ParadeDB、Redis、RustFS，统一维护服务配置、凭证、Compose 片段与连接信息，同时支持独立部署。
 - `deploy_apps/`：Casdoor、New API、Sub2API、LobeHub（目录名 `lobechat`）调用服务接口组合默认依赖。Open WebUI 默认使用 SQLite 和本地存储。
-- `tools/`：宿主机工具，包括 code-server、nginx、certbot 和 Docker 防火墙配置，按工具提供 `install/start/stop/rm`；一次性运行的 Certbot 不提供 `stop/rm`。
+- `tools/`：宿主机工具，包括 code-server、nginx、certbot 和 Docker 防火墙配置，按工具提供 `install/init/start/stop/rm`；Code-Server 与 Nginx 使用 `init` 生成 settings；一次性运行的 Certbot 不提供 `init/stop/rm`。
 
 ## 设计文档
 

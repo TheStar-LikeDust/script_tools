@@ -1,4 +1,4 @@
-# Tmux session name (Auto-generated on install)
+# Tmux session name (Auto-generated on init)
 SESSION_NAME="codeserver_XXXX"
 
 # Bind Host

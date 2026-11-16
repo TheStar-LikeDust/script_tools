@@ -27,8 +27,8 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-if [ -n "$NAME_OVERRIDE" ] && [ "$COMMAND" != install ]; then
-    echo "[ERROR] --name is only valid with install." >&2
+if [ -n "$NAME_OVERRIDE" ] && [ "$COMMAND" != init ]; then
+    echo "[ERROR] --name is only valid with init." >&2
     exit 2
 fi
 
@@ -42,7 +42,7 @@ SUDO=()
 
 require_conf() {
     if [ ! -f "$CONF_FILE" ]; then
-        echo "[ERROR] $CONF_FILE not found. Run 'bash cli.sh install' first." >&2
+        echo "[ERROR] $CONF_FILE not found. Run 'bash cli.sh init' first." >&2
         exit 1
     fi
 }
@@ -112,17 +112,18 @@ generate_yaml() {
     chmod 600 "$CONFIG_PATH/config.yaml"
 }
 
-do_install() {
+do_init() {
     if [ -n "$NAME_OVERRIDE" ] && [ -f "$CONF_FILE" ]; then
-        echo "[ERROR] --name only applies when install creates a new settings file." >&2
+        echo "[ERROR] --name only applies when init creates a new settings file." >&2
         exit 2
     fi
     if [ ! -f "$CONF_FILE" ]; then
         generate_settings
     fi
-    load_conf
-    chmod 600 "$CONF_FILE"
+    echo "[SUCCESS] Code-Server settings initialized at $CONF_FILE."
+}
 
+do_install() {
     if ! command -v tmux >/dev/null 2>&1 || ! command -v code-server >/dev/null 2>&1; then
         "${SUDO[@]}" apt-get update -y
     fi
@@ -133,8 +134,7 @@ do_install() {
         curl -fsSL https://code-server.dev/install.sh | sh
     fi
 
-    mkdir -p "$CONFIG_PATH" "$USER_DATA_PATH"
-    echo "[SUCCESS] Code-Server installed. Review $CONF_FILE, then run 'bash cli.sh start'."
+    echo "[SUCCESS] Code-Server and tmux installed. Run 'bash cli.sh init' to create settings."
 }
 
 do_start() {
@@ -180,16 +180,18 @@ do_rm() {
 }
 
 do_help() {
-    echo "Usage: $0 {install|start|stop|rm} [--conf PATH] [--name NAME]"
-    echo "  install : Install code-server and tmux; create missing instance settings."
+    echo "Usage: $0 {init|install|start|stop|rm} [--conf PATH] [--name NAME]"
+    echo "  init    : Create missing instance settings."
+    echo "  install : Install code-server and tmux."
     echo "  start   : Start the configured tmux session."
     echo "  stop    : Stop the configured tmux session."
     echo "  rm      : Stop and remove this instance's settings and generated config.yaml."
     echo "  --conf  : Settings path (default: <script_dir>/settings_codeserver.conf)."
-    echo "  --name  : Instance name used when install creates settings."
+    echo "  --name  : Instance name used when init creates settings."
 }
 
 case "$COMMAND" in
+    init)    do_init ;;
     install) do_install ;;
     start)   do_start ;;
     stop)    do_stop ;;
